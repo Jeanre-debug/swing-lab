@@ -426,11 +426,15 @@
   var SEVERE_CURVE_EPS = FACE_EPS * 2.5;
   // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
   // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
-  // in-to-out vs out-to-in — but that mapping can't be verified without a real swing on the
-  // actual device. Flip either to -1 if a deliberately out-to-in or open-face test swing
-  // reads backwards.
+  // in-to-out vs out-to-in. FACE_SIGN = -1 comes from working the mounting geometry through:
+  // turning the hands right (clockwise looking down the shaft) opens the face per how it was
+  // described, and raw gamma reads positive for that same clockwise turn — so it has to be
+  // inverted to land on "positive = closed". Still worth a real-swing check, since a
+  // geometry derivation from a verbal description isn't the same as seeing it on the device.
+  // Flip either constant to -1 (back to 1 for FACE_SIGN) if a deliberately out-to-in or
+  // open-face test swing reads backwards.
   var PATH_SIGN = 1;
-  var FACE_SIGN = 1;
+  var FACE_SIGN = -1;
   var WINDOW_MS = 3000;
   var RESULT_HOLD_MS = 1100;
 
