@@ -451,14 +451,19 @@
   }
 
   function finalizeSwing(nowT) {
-    var startIdx = swingStart.idx;
     var peakT = swingPeak.t;
-    var windowSamples = buffer.filter(function (s) { return s.t >= swingStart.t && s.t <= peakT; });
-    var transition = windowSamples.reduce(function (min, s) { return s.net < min.net ? s : min; }, windowSamples[0] || swingStart);
+    // Look back well before the threshold-crossing sample (swingStart) — that crossing
+    // is usually already near the top-of-backswing dip, not the true start of motion,
+    // so searching only after it collapses backswing duration to ~0 every time.
+    var lookbackStart = peakT - 1000;
+    var windowSamples = buffer.filter(function (s) { return s.t <= peakT && s.t >= lookbackStart; });
+    if (!windowSamples.length) windowSamples = [swingStart];
+    var winStart = windowSamples[0];
+    var transition = windowSamples.reduce(function (min, s) { return s.net < min.net ? s : min; }, winStart);
 
-    var backswingDur = transition.t - swingStart.t;
+    var backswingDur = transition.t - winStart.t;
     var downswingDur = peakT - transition.t;
-    var tempoRatio = (backswingDur > 30 && downswingDur > 30) ? (backswingDur / downswingDur) : null;
+    var tempoRatio = (backswingDur > 40 && downswingDur > 40) ? clamp(backswingDur / downswingDur, 0.3, 9.9) : null;
 
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
     var pathLabel = rotAccum > ROT_EPS ? "OUT→IN" : rotAccum < -ROT_EPS ? "IN→OUT" : "NEUTRAL";
