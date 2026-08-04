@@ -1,0 +1,706 @@
+<title>Swing Lab — Phase 0 Sensor Spike</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+
+<style>
+  :root {
+    --bg: #0c120e;
+    --panel: #131b15;
+    --panel-raised: #182219;
+    --line: #26332a;
+    --line-strong: #364638;
+    --turf: #4bab6d;
+    --turf-dim: #2c6b45;
+    --flag: #e8543f;
+    --sand: #d9b877;
+    --paper: #eef2ea;
+    --muted: #8a9a8f;
+    --muted-dim: #566259;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--paper);
+    font-family: var(--sans);
+  }
+
+  body {
+    display: flex;
+    justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+
+  .console {
+    width: 100%;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    margin: 2px 0 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .warning {
+    display: none;
+    background: color-mix(in srgb, var(--flag) 16%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--flag) 45%, var(--line));
+    color: var(--paper);
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 12px 14px;
+    border-radius: 10px;
+  }
+  .warning.show { display: block; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 16px 18px;
+  }
+
+  .status-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 2px 2px;
+  }
+
+  .phase {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    transition: color 0.15s ease;
+  }
+  .phase.hot { color: var(--sand); }
+  .phase.impact { color: var(--flag); }
+  .phase.armed { color: var(--turf); }
+
+  .dot-wrap { display: flex; align-items: center; gap: 7px; }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted-dim);
+    transition: background 0.15s ease;
+  }
+  .dot.armed { background: var(--turf); box-shadow: 0 0 0 4px color-mix(in srgb, var(--turf) 20%, transparent); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.impact { background: var(--flag); box-shadow: 0 0 0 5px color-mix(in srgb, var(--flag) 25%, transparent); }
+  @media (prefers-reduced-motion: reduce) { .dot.armed { animation: none; } }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--turf) 18%, transparent); }
+    50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--turf) 6%, transparent); }
+  }
+
+  .readout {
+    text-align: center;
+    padding: 10px 0 4px;
+  }
+  .readout .label {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .readout .value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 74px;
+    font-weight: 600;
+    line-height: 1;
+    margin-top: 6px;
+    color: var(--paper);
+    transition: color 0.2s ease;
+  }
+  .readout .value.impact { color: var(--flag); }
+  .readout .unit { font-size: 22px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+
+  .metrics-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .metric {
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 9px 12px;
+  }
+  .metric .label {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .metric .val {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 19px;
+    font-weight: 600;
+    margin-top: 3px;
+    color: var(--sand);
+  }
+
+  .scope-wrap { margin-top: 14px; }
+  canvas#scope {
+    display: block;
+    width: 100%;
+    height: 108px;
+    border-radius: 10px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+  }
+
+  .sensitivity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .sensitivity .label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  input[type="range"] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--line-strong);
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--sand);
+    border: 2px solid var(--bg);
+  }
+
+  button#action {
+    appearance: none;
+    border: none;
+    width: 100%;
+    padding: 17px;
+    margin-top: 6px;
+    border-radius: 12px;
+    background: var(--turf);
+    color: #06170d;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-family: var(--sans);
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+  button#action:active { opacity: 0.85; }
+  button#action:disabled { background: var(--line-strong); color: var(--muted); }
+  button#action.recal { background: var(--panel-raised); color: var(--paper); border: 1px solid var(--line-strong); }
+  button#action:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
+
+  .hint {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+    line-height: 1.4;
+  }
+
+  .history .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .history .head .eyebrow { margin: 0; }
+  .history .head .clear {
+    font-size: 11px;
+    color: var(--muted);
+    background: none;
+    border: none;
+    font-family: var(--sans);
+    padding: 4px;
+  }
+  .history .head .clear:focus-visible { outline: 2px solid var(--sand); }
+
+  .history-list { display: flex; flex-direction: column; gap: 6px; }
+  .history-row {
+    display: grid;
+    grid-template-columns: 20px 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    background: var(--panel-raised);
+    border-radius: 8px;
+    font-size: 12.5px;
+  }
+  .history-row .n { color: var(--muted-dim); font-family: var(--mono); }
+  .history-row .path { color: var(--muted); }
+  .history-row .pwr { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); font-weight: 600; }
+  .history-row .tempo { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--sand); }
+  .history-empty { font-size: 12.5px; color: var(--muted); padding: 6px 2px; }
+
+  details.debug {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  details.debug summary {
+    cursor: pointer;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 10.5px;
+    padding: 2px 0;
+  }
+  details.debug summary:focus-visible { outline: 2px solid var(--sand); }
+  .debug-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .debug-grid div span { color: var(--muted-dim); }
+
+  footer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted-dim);
+    padding: 4px 8px 0;
+    line-height: 1.5;
+  }
+</style>
+
+<div class="console">
+  <div>
+    <div class="eyebrow">Phase 0 · Sensor Feasibility Spike</div>
+    <h1>Swing Lab</h1>
+  </div>
+
+  <div class="warning" id="warning"></div>
+
+  <div class="panel">
+    <div class="status-strip">
+      <div class="phase" id="phase">IDLE</div>
+      <div class="dot-wrap">
+        <span class="dot" id="dot"></span>
+      </div>
+    </div>
+
+    <div class="readout">
+      <div class="label">Swing Power</div>
+      <div class="value" id="power">&#8211;&#8211;<span class="unit">/100</span></div>
+    </div>
+
+    <div class="metrics-row">
+      <div class="metric">
+        <div class="label">Tempo</div>
+        <div class="val" id="tempo">&#8211;&#8211;</div>
+      </div>
+      <div class="metric">
+        <div class="label">Path</div>
+        <div class="val" id="path">&#8211;&#8211;</div>
+      </div>
+    </div>
+
+    <div class="scope-wrap">
+      <canvas id="scope"></canvas>
+    </div>
+
+    <div class="sensitivity">
+      <span class="label">Twitchy</span>
+      <input type="range" id="sens" min="3" max="14" step="0.5" value="6.5">
+      <span class="label">Firm</span>
+    </div>
+
+    <button id="action">Tap to Begin</button>
+    <div class="hint" id="hint">Hold the phone like a club grip, then keep it still while it calibrates.</div>
+  </div>
+
+  <div class="panel history">
+    <div class="head">
+      <div class="eyebrow">Recent Swings</div>
+      <button class="clear" id="clear">Clear</button>
+    </div>
+    <div class="history-list" id="historyList">
+      <div class="history-empty">No swings recorded yet.</div>
+    </div>
+  </div>
+
+  <details class="debug panel">
+    <summary>Raw Sensor Data</summary>
+    <div class="debug-grid">
+      <div><span>baseline</span> <span id="dbgBaseline">–</span></div>
+      <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
+      <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
+      <div><span>net accel</span> <span id="dbgNet">–</span></div>
+      <div><span>rot rate</span> <span id="dbgRot">–</span></div>
+      <div><span>sample hz</span> <span id="dbgHz">–</span></div>
+    </div>
+  </details>
+
+  <footer>No course, no ball — this build only answers one question:<br>does swinging the phone feel like golf?</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    warning: $("warning"), phase: $("phase"), dot: $("dot"),
+    power: $("power"), tempo: $("tempo"), path: $("path"),
+    action: $("action"), hint: $("hint"), sens: $("sens"),
+    historyList: $("historyList"), clear: $("clear"),
+    dbgBaseline: $("dbgBaseline"), dbgNoise: $("dbgNoise"),
+    dbgThreshold: $("dbgThreshold"), dbgNet: $("dbgNet"),
+    dbgRot: $("dbgRot"), dbgHz: $("dbgHz")
+  };
+
+  var canvas = $("scope");
+  var ctx = canvas.getContext("2d");
+
+  // Full-scale net-acceleration reading (m/s^2) mapped to a 100-point power score.
+  // Rough guess from a hand swing's accelerometer delta — tune once real swings are logged.
+  var POWER_SCALE = 26;
+  // Accumulated rotation-rate proxy (deg) below which a swing path reads as "neutral".
+  var ROT_EPS = 14;
+  var WINDOW_MS = 3000;
+  var RESULT_HOLD_MS = 1100;
+
+  var state = "idle"; // idle | calibrating | ready | swinging | result
+  var buffer = []; // {t, net, rot}
+  var baseline = 0, noiseStd = 0, armThreshold = 2;
+  var calibSamples = [];
+  var calibStart = 0;
+  var swingStart = null; // {t, idx}
+  var swingPeak = null; // {t, net}
+  var fallCount = 0;
+  var rotAccum = 0;
+  var lastSampleT = null;
+  var lastNet = 0;
+  var resultUntil = 0;
+  var history = [];
+  var sampleTimes = [];
+  var lastRaw = { ax: 0, ay: 0, az: 0, rot: 0 };
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function setPhase(text, cls) {
+    els.phase.textContent = text;
+    els.phase.className = "phase" + (cls ? " " + cls : "");
+  }
+
+  function setDot(cls) {
+    els.dot.className = "dot" + (cls ? " " + cls : "");
+  }
+
+  function fmt(n, d) {
+    if (n === null || n === undefined || isNaN(n)) return "––";
+    return n.toFixed(d === undefined ? 0 : d);
+  }
+
+  function magnitude(x, y, z) { return Math.sqrt(x * x + y * y + z * z); }
+
+  function mean(arr) { return arr.reduce(function (a, b) { return a + b; }, 0) / arr.length; }
+  function stddev(arr, m) {
+    var v = arr.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / arr.length;
+    return Math.sqrt(v);
+  }
+
+  function renderHistory() {
+    if (!history.length) {
+      els.historyList.innerHTML = '<div class="history-empty">No swings recorded yet.</div>';
+      return;
+    }
+    els.historyList.innerHTML = history.map(function (h, i) {
+      return '<div class="history-row">' +
+        '<span class="n">' + (history.length - i) + '</span>' +
+        '<span class="path">' + h.path + '</span>' +
+        '<span class="pwr">PWR ' + h.power + '</span>' +
+        '<span class="tempo">' + h.tempo + '</span>' +
+        '</div>';
+    }).join("");
+  }
+
+  function finalizeSwing(nowT) {
+    var startIdx = swingStart.idx;
+    var peakT = swingPeak.t;
+    var windowSamples = buffer.filter(function (s) { return s.t >= swingStart.t && s.t <= peakT; });
+    var transition = windowSamples.reduce(function (min, s) { return s.net < min.net ? s : min; }, windowSamples[0] || swingStart);
+
+    var backswingDur = transition.t - swingStart.t;
+    var downswingDur = peakT - transition.t;
+    var tempoRatio = (backswingDur > 30 && downswingDur > 30) ? (backswingDur / downswingDur) : null;
+
+    var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
+    var pathLabel = rotAccum > ROT_EPS ? "OUT→IN" : rotAccum < -ROT_EPS ? "IN→OUT" : "NEUTRAL";
+
+    els.power.innerHTML = power + '<span class="unit">/100</span>';
+    els.power.classList.add("impact");
+    els.tempo.textContent = tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a";
+    els.path.textContent = pathLabel;
+
+    history.unshift({
+      power: power,
+      tempo: tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a",
+      path: pathLabel
+    });
+    history = history.slice(0, 5);
+    renderHistory();
+
+    setPhase("IMPACT!", "impact");
+    setDot("impact");
+
+    state = "result";
+    resultUntil = nowT + RESULT_HOLD_MS;
+  }
+
+  function handleSample(net, rot, t) {
+    buffer.push({ t: t, net: net, rot: rot });
+    var cutoff = t - WINDOW_MS;
+    while (buffer.length && buffer[0].t < cutoff) buffer.shift();
+
+    if (state === "ready") {
+      if (net > armThreshold) {
+        state = "swinging";
+        swingStart = { t: t, idx: buffer.length - 1 };
+        swingPeak = { t: t, net: net };
+        fallCount = 0;
+        rotAccum = 0;
+        setPhase("BACKSWING", "hot");
+      }
+    } else if (state === "swinging") {
+      var dt = lastSampleT ? (t - lastSampleT) / 1000 : 1 / 60;
+      rotAccum += rot * dt;
+
+      if (net > swingPeak.net) {
+        swingPeak = { t: t, net: net };
+        fallCount = 0;
+        if (net > armThreshold * 1.6) setPhase("DOWNSWING", "hot");
+      } else {
+        fallCount++;
+      }
+
+      var stalled = t - swingStart.t > 2500;
+      if (stalled) {
+        state = "ready";
+        setPhase("ARMED — SWING", "armed");
+      } else if (fallCount >= 3 && (t - swingPeak.t) < 500) {
+        finalizeSwing(t);
+      }
+    } else if (state === "result") {
+      if (t > resultUntil) {
+        state = "ready";
+        els.power.classList.remove("impact");
+        setPhase("ARMED — SWING", "armed");
+        setDot("armed");
+      }
+    }
+
+    lastSampleT = t;
+    lastNet = net;
+  }
+
+  function onMotion(e) {
+    var t = performance.now();
+    sampleTimes.push(t);
+    if (sampleTimes.length > 30) sampleTimes.shift();
+
+    var lin = e.acceleration;
+    var grav = e.accelerationIncludingGravity;
+    var src = (lin && (lin.x || lin.y || lin.z)) ? lin : grav;
+    if (!src) return;
+
+    var ax = src.x || 0, ay = src.y || 0, az = src.z || 0;
+    var raw = magnitude(ax, ay, az);
+    var rot = (e.rotationRate && e.rotationRate.alpha) || 0;
+    lastRaw = { ax: ax, ay: ay, az: az, rot: rot };
+
+    if (state === "calibrating") {
+      calibSamples.push(raw);
+      if (t - calibStart > 1100) {
+        baseline = mean(calibSamples);
+        noiseStd = Math.max(stddev(calibSamples, baseline), 0.05);
+        updateThreshold();
+        state = "ready";
+        setPhase("ARMED — SWING", "armed");
+        setDot("armed");
+        els.action.textContent = "Recalibrate";
+        els.action.classList.add("recal");
+        els.action.disabled = false;
+        els.hint.textContent = "Take your swing — impact triggers the readout automatically.";
+      }
+      return;
+    }
+
+    var net = Math.abs(raw - baseline);
+    handleSample(net, rot, t);
+  }
+
+  function updateThreshold() {
+    armThreshold = Math.max(noiseStd * parseFloat(els.sens.value), 0.3);
+  }
+  els.sens.addEventListener("input", updateThreshold);
+
+  function beginCalibration() {
+    state = "calibrating";
+    calibSamples = [];
+    calibStart = performance.now();
+    setPhase("HOLD STILL…", "hot");
+    setDot(null);
+    els.action.disabled = true;
+    els.action.textContent = "Calibrating…";
+    els.hint.textContent = "Measuring baseline noise — don't move the phone.";
+  }
+
+  function start() {
+    if (typeof DeviceMotionEvent === "undefined") {
+      els.warning.textContent = "No motion sensors detected. Open this page on a phone, not a laptop.";
+      els.warning.classList.add("show");
+      return;
+    }
+
+    var needsPermission = typeof DeviceMotionEvent.requestPermission === "function";
+    if (needsPermission) {
+      DeviceMotionEvent.requestPermission().then(function (res) {
+        if (res === "granted") {
+          window.addEventListener("devicemotion", onMotion);
+          beginCalibration();
+        } else {
+          els.warning.textContent = "Motion access was denied. Enable it in Settings → Safari → Motion & Orientation Access, then reload.";
+          els.warning.classList.add("show");
+        }
+      }).catch(function () {
+        els.warning.textContent = "Couldn't request motion access. Reload and try again.";
+        els.warning.classList.add("show");
+      });
+    } else {
+      window.addEventListener("devicemotion", onMotion);
+      beginCalibration();
+    }
+  }
+
+  els.action.addEventListener("click", function () {
+    if (state === "calibrating") return;
+    start();
+  });
+
+  els.clear.addEventListener("click", function () {
+    history = [];
+    renderHistory();
+  });
+
+  // Scope render loop, decoupled from sensor sample rate.
+  function resizeCanvas() {
+    var rect = canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  function drawScope() {
+    var w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    var vmax = 20;
+    for (var i = 0; i < buffer.length; i++) if (buffer[i].net > vmax) vmax = buffer[i].net;
+    vmax = Math.max(vmax * 1.15, armThreshold * 1.3, 12);
+
+    ctx.strokeStyle = "rgba(138,154,143,0.15)";
+    ctx.lineWidth = 1;
+    for (var g = 1; g < 3; g++) {
+      var gy = h - (h * g) / 3;
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    if (state === "ready" || state === "swinging" || state === "result") {
+      var ty = h - (armThreshold / vmax) * h;
+      ctx.strokeStyle = "rgba(217,184,119,0.45)";
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, ty);
+      ctx.lineTo(w, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    if (buffer.length > 1) {
+      var now = performance.now();
+      ctx.strokeStyle = state === "result" ? "#e8543f" : "#4bab6d";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (var j = 0; j < buffer.length; j++) {
+        var s = buffer[j];
+        var x = w - ((now - s.t) / WINDOW_MS) * w;
+        var y = h - clamp(s.net / vmax, 0, 1) * h;
+        if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      if (state === "result" && swingPeak) {
+        var px = w - ((now - swingPeak.t) / WINDOW_MS) * w;
+        var py = h - clamp(swingPeak.net / vmax, 0, 1) * h;
+        if (px > -10) {
+          ctx.fillStyle = "#e8543f";
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    var hz = sampleTimes.length > 1 ? Math.round(1000 / ((sampleTimes[sampleTimes.length - 1] - sampleTimes[0]) / (sampleTimes.length - 1))) : 0;
+    els.dbgBaseline.textContent = fmt(baseline, 2);
+    els.dbgNoise.textContent = fmt(noiseStd, 3);
+    els.dbgThreshold.textContent = fmt(armThreshold, 2);
+    els.dbgNet.textContent = fmt(lastNet, 2);
+    els.dbgRot.textContent = fmt(lastRaw.rot, 1) + "°/s";
+    els.dbgHz.textContent = hz ? hz + " Hz" : "–";
+
+    requestAnimationFrame(drawScope);
+  }
+
+  resizeCanvas();
+  requestAnimationFrame(drawScope);
+  renderHistory();
+
+  if (typeof DeviceMotionEvent === "undefined") {
+    els.warning.textContent = "No motion sensors detected on this device. Open this page on a phone.";
+    els.warning.classList.add("show");
+    els.action.disabled = true;
+  }
+})();
+</script>
