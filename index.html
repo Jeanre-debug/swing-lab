@@ -135,6 +135,25 @@
   .readout .value.impact { color: var(--flag); }
   .readout .unit { font-size: 22px; color: var(--muted); font-weight: 500; margin-left: 2px; }
 
+  .shot-badge {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  }
+  /* On-target: dead straight or a controlled draw/fade working back to the line. */
+  .shot-badge.good { color: #06170d; background: var(--turf); border-color: var(--turf); }
+  /* Off-target: push/pull (no curve back) or an overcooked hook/slice. */
+  .shot-badge.miss { color: var(--paper); background: color-mix(in srgb, var(--flag) 30%, var(--panel-raised)); border-color: color-mix(in srgb, var(--flag) 55%, var(--line)); }
+
   .metrics-row {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -321,6 +340,7 @@
     <div class="readout">
       <div class="label">Swing Power</div>
       <div class="value" id="power">&#8211;&#8211;<span class="unit">/100</span></div>
+      <div class="shot-badge" id="shotBadge">&#8211;&#8211;</div>
     </div>
 
     <div class="metrics-row">
@@ -385,7 +405,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     warning: $("warning"), phase: $("phase"), dot: $("dot"),
-    power: $("power"), tempo: $("tempo"), path: $("path"), face: $("face"),
+    power: $("power"), tempo: $("tempo"), path: $("path"), face: $("face"), shotBadge: $("shotBadge"),
     action: $("action"), hint: $("hint"), sens: $("sens"),
     historyList: $("historyList"), clear: $("clear"),
     dbgBaseline: $("dbgBaseline"), dbgNoise: $("dbgNoise"),
@@ -402,6 +422,8 @@
   // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
   var PATH_EPS = 14;
   var FACE_EPS = 8;
+  // Face-to-path (curve) beyond this reads as a full hook/slice rather than a gentle draw/fade.
+  var SEVERE_CURVE_EPS = FACE_EPS * 2.5;
   // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
   // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
   // in-to-out vs out-to-in — but that mapping can't be verified without a real swing on the
@@ -465,9 +487,34 @@
           '<span class="pwr">PWR ' + h.power + '</span>' +
           '<span class="tempo">' + h.tempo + '</span>' +
         '</div>' +
-        '<div class="shape">' + h.path + ' · ' + h.face + '</div>' +
+        '<div class="shape">' + h.shot + ' — ' + h.path + ' / ' + h.face + '</div>' +
         '</div>';
     }).join("");
+  }
+
+  var GOOD_SHOTS = { "STRAIGHT": true, "DRAW": true, "FADE": true };
+
+  // Path (relative to target) and Face (relative to target) are independent, both measured
+  // from the same address/calibration baseline. Face-to-path — their difference — is what
+  // actually curves the ball (closed-to-path curves left, open-to-path curves right); path
+  // alone only matters when there's no curve to bring the ball back (push/pull). This is the
+  // same two-number model modern launch monitors use, not a simplification specific to phones.
+  function classifyShot(pathVal, faceVal) {
+    var faceToPath = faceVal - pathVal;
+    var pathDir = pathVal > PATH_EPS ? 1 : pathVal < -PATH_EPS ? -1 : 0; // 1 = out-to-in, -1 = in-to-out
+    var curveDir = faceToPath > FACE_EPS ? 1 : faceToPath < -FACE_EPS ? -1 : 0; // 1 = curves left, -1 = curves right
+    var severe = Math.abs(faceToPath) > SEVERE_CURVE_EPS;
+
+    if (curveDir === 0) {
+      if (pathDir === 0) return "STRAIGHT";
+      return pathDir === -1 ? "PUSH" : "PULL";
+    }
+    if (curveDir === 1) {
+      if (pathDir === 1) return "PULL-HOOK";
+      return severe ? "HOOK" : "DRAW";
+    }
+    if (pathDir === -1) return "PUSH-SLICE";
+    return severe ? "SLICE" : "FADE";
   }
 
   function finalizeSwing(nowT) {
@@ -488,20 +535,24 @@
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
     var pathVal = PATH_SIGN * pathAccum;
     var faceVal = FACE_SIGN * faceAccum;
-    var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "SQUARE";
+    var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "STRAIGHT";
     var faceLabel = faceVal > FACE_EPS ? "CLOSED" : faceVal < -FACE_EPS ? "OPEN" : "SQUARE";
+    var shotName = classifyShot(pathVal, faceVal);
 
     els.power.innerHTML = power + '<span class="unit">/100</span>';
     els.power.classList.add("impact");
     els.tempo.textContent = tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a";
     els.path.textContent = pathLabel;
     els.face.textContent = faceLabel;
+    els.shotBadge.textContent = shotName;
+    els.shotBadge.className = "shot-badge " + (GOOD_SHOTS[shotName] ? "good" : "miss");
 
     history.unshift({
       power: power,
       tempo: tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a",
       path: pathLabel,
-      face: faceLabel
+      face: faceLabel,
+      shot: shotName
     });
     history = history.slice(0, 5);
     renderHistory();
@@ -629,6 +680,13 @@
     els.action.disabled = true;
     els.action.textContent = "Calibrating…";
     els.hint.textContent = "Measuring baseline noise — don't move the phone.";
+    els.power.innerHTML = '&#8211;&#8211;<span class="unit">/100</span>';
+    els.power.classList.remove("impact");
+    els.tempo.textContent = "––";
+    els.path.textContent = "––";
+    els.face.textContent = "––";
+    els.shotBadge.textContent = "––";
+    els.shotBadge.className = "shot-badge";
   }
 
   function start() {
