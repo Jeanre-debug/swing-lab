@@ -137,15 +137,16 @@
 
   .metrics-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
     margin-top: 4px;
   }
   .metric {
     background: var(--panel-raised);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 9px 12px;
+    padding: 9px 10px;
+    min-width: 0;
   }
   .metric .label {
     font-size: 9.5px;
@@ -157,9 +158,12 @@
   .metric .val {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
-    font-size: 19px;
+    font-size: 15px;
     font-weight: 600;
     margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--sand);
   }
 
@@ -251,19 +255,19 @@
 
   .history-list { display: flex; flex-direction: column; gap: 6px; }
   .history-row {
-    display: grid;
-    grid-template-columns: 20px 1fr auto auto;
-    align-items: center;
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     padding: 9px 10px;
     background: var(--panel-raised);
     border-radius: 8px;
     font-size: 12.5px;
   }
+  .history-row .top { display: flex; align-items: center; gap: 10px; }
   .history-row .n { color: var(--muted-dim); font-family: var(--mono); }
-  .history-row .path { color: var(--muted); }
-  .history-row .pwr { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); font-weight: 600; }
+  .history-row .pwr { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); font-weight: 600; margin-left: auto; }
   .history-row .tempo { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--sand); }
+  .history-row .shape { color: var(--muted); font-size: 11px; letter-spacing: 0.02em; }
   .history-empty { font-size: 12.5px; color: var(--muted); padding: 6px 2px; }
 
   details.debug {
@@ -328,6 +332,10 @@
         <div class="label">Path</div>
         <div class="val" id="path">&#8211;&#8211;</div>
       </div>
+      <div class="metric">
+        <div class="label">Face</div>
+        <div class="val" id="face">&#8211;&#8211;</div>
+      </div>
     </div>
 
     <div class="scope-wrap">
@@ -361,7 +369,8 @@
       <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
       <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
       <div><span>net accel</span> <span id="dbgNet">–</span></div>
-      <div><span>rot rate</span> <span id="dbgRot">–</span></div>
+      <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
+      <div><span>roll rate</span> <span id="dbgRot">–</span></div>
       <div><span>sample hz</span> <span id="dbgHz">–</span></div>
     </div>
   </details>
@@ -376,12 +385,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     warning: $("warning"), phase: $("phase"), dot: $("dot"),
-    power: $("power"), tempo: $("tempo"), path: $("path"),
+    power: $("power"), tempo: $("tempo"), path: $("path"), face: $("face"),
     action: $("action"), hint: $("hint"), sens: $("sens"),
     historyList: $("historyList"), clear: $("clear"),
     dbgBaseline: $("dbgBaseline"), dbgNoise: $("dbgNoise"),
     dbgThreshold: $("dbgThreshold"), dbgNet: $("dbgNet"),
-    dbgRot: $("dbgRot"), dbgHz: $("dbgHz")
+    dbgYaw: $("dbgYaw"), dbgRot: $("dbgRot"), dbgHz: $("dbgHz")
   };
 
   var canvas = $("scope");
@@ -390,26 +399,35 @@
   // Full-scale net-acceleration reading (m/s^2) mapped to a 100-point power score.
   // Rough guess from a hand swing's accelerometer delta — tune once real swings are logged.
   var POWER_SCALE = 26;
-  // Accumulated rotation-rate proxy (deg) below which a swing path reads as "neutral".
-  var ROT_EPS = 14;
+  // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
+  var PATH_EPS = 14;
+  var FACE_EPS = 8;
+  // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
+  // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
+  // in-to-out vs out-to-in — but that mapping can't be verified without a real swing on the
+  // actual device. Flip either to -1 if a deliberately out-to-in or open-face test swing
+  // reads backwards.
+  var PATH_SIGN = 1;
+  var FACE_SIGN = 1;
   var WINDOW_MS = 3000;
   var RESULT_HOLD_MS = 1100;
 
   var state = "idle"; // idle | calibrating | ready | swinging | result
-  var buffer = []; // {t, net, rot}
+  var buffer = []; // {t, net}
   var baseline = 0, noiseStd = 0, armThreshold = 2;
   var calibSamples = [];
   var calibStart = 0;
   var swingStart = null; // {t, idx}
   var swingPeak = null; // {t, net}
   var fallCount = 0;
-  var rotAccum = 0;
+  var pathAccum = 0;
+  var faceAccum = 0;
   var lastSampleT = null;
   var lastNet = 0;
   var resultUntil = 0;
   var history = [];
   var sampleTimes = [];
-  var lastRaw = { ax: 0, ay: 0, az: 0, rot: 0 };
+  var lastRaw = { ax: 0, ay: 0, az: 0, yaw: 0, roll: 0 };
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -442,10 +460,12 @@
     }
     els.historyList.innerHTML = history.map(function (h, i) {
       return '<div class="history-row">' +
-        '<span class="n">' + (history.length - i) + '</span>' +
-        '<span class="path">' + h.path + '</span>' +
-        '<span class="pwr">PWR ' + h.power + '</span>' +
-        '<span class="tempo">' + h.tempo + '</span>' +
+        '<div class="top">' +
+          '<span class="n">' + (history.length - i) + '</span>' +
+          '<span class="pwr">PWR ' + h.power + '</span>' +
+          '<span class="tempo">' + h.tempo + '</span>' +
+        '</div>' +
+        '<div class="shape">' + h.path + ' · ' + h.face + '</div>' +
         '</div>';
     }).join("");
   }
@@ -466,17 +486,22 @@
     var tempoRatio = (backswingDur > 40 && downswingDur > 40) ? clamp(backswingDur / downswingDur, 0.3, 9.9) : null;
 
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
-    var pathLabel = rotAccum > ROT_EPS ? "OUT→IN" : rotAccum < -ROT_EPS ? "IN→OUT" : "NEUTRAL";
+    var pathVal = PATH_SIGN * pathAccum;
+    var faceVal = FACE_SIGN * faceAccum;
+    var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "SQUARE";
+    var faceLabel = faceVal > FACE_EPS ? "CLOSED" : faceVal < -FACE_EPS ? "OPEN" : "SQUARE";
 
     els.power.innerHTML = power + '<span class="unit">/100</span>';
     els.power.classList.add("impact");
     els.tempo.textContent = tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a";
     els.path.textContent = pathLabel;
+    els.face.textContent = faceLabel;
 
     history.unshift({
       power: power,
       tempo: tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a",
-      path: pathLabel
+      path: pathLabel,
+      face: faceLabel
     });
     history = history.slice(0, 5);
     renderHistory();
@@ -488,8 +513,8 @@
     resultUntil = nowT + RESULT_HOLD_MS;
   }
 
-  function handleSample(net, rot, t) {
-    buffer.push({ t: t, net: net, rot: rot });
+  function handleSample(net, yawRate, rollRate, t) {
+    buffer.push({ t: t, net: net });
     var cutoff = t - WINDOW_MS;
     while (buffer.length && buffer[0].t < cutoff) buffer.shift();
 
@@ -499,12 +524,14 @@
         swingStart = { t: t, idx: buffer.length - 1 };
         swingPeak = { t: t, net: net };
         fallCount = 0;
-        rotAccum = 0;
+        pathAccum = 0;
+        faceAccum = 0;
         setPhase("BACKSWING", "hot");
       }
     } else if (state === "swinging") {
       var dt = lastSampleT ? (t - lastSampleT) / 1000 : 1 / 60;
-      rotAccum += rot * dt;
+      pathAccum += yawRate * dt;
+      faceAccum += rollRate * dt;
 
       if (net > swingPeak.net) {
         swingPeak = { t: t, net: net };
@@ -546,8 +573,26 @@
 
     var ax = src.x || 0, ay = src.y || 0, az = src.z || 0;
     var raw = magnitude(ax, ay, az);
-    var rot = (e.rotationRate && e.rotationRate.alpha) || 0;
-    lastRaw = { ax: ax, ay: ay, az: az, rot: rot };
+
+    var rr = e.rotationRate || {};
+    // rotationRate axes per spec: alpha = about Z, beta = about X, gamma = about Y —
+    // i.e. the angular-velocity vector in device-local coordinates is (beta, gamma, alpha).
+    var rAlpha = rr.alpha || 0, rBeta = rr.beta || 0, rGamma = rr.gamma || 0;
+
+    // Yaw rate about true "up" (gravity), found by projecting that angular-velocity vector
+    // onto the measured gravity direction — this reads the swing's left/right turning rate
+    // (path) the same way no matter how the phone is gripped or tilted, since both vectors
+    // are expressed in the same device-local frame at the same instant.
+    var gv = grav || src;
+    var gx = gv.x || 0, gy = gv.y || 0, gz = gv.z || 0;
+    var gMag = magnitude(gx, gy, gz) || 1;
+    var yawRate = (rBeta * gx + rGamma * gy + rAlpha * gz) / gMag;
+
+    // Roll about the phone's own long axis (gamma) — with a fixed grip this stays aligned
+    // with the shaft, so it works as a clubface open/close proxy regardless of swing tilt.
+    var rollRate = rGamma;
+
+    lastRaw = { ax: ax, ay: ay, az: az, yaw: yawRate, roll: rollRate };
 
     if (state === "calibrating") {
       calibSamples.push(raw);
@@ -567,7 +612,7 @@
     }
 
     var net = Math.abs(raw - baseline);
-    handleSample(net, rot, t);
+    handleSample(net, yawRate, rollRate, t);
   }
 
   function updateThreshold() {
@@ -692,7 +737,8 @@
     els.dbgNoise.textContent = fmt(noiseStd, 3);
     els.dbgThreshold.textContent = fmt(armThreshold, 2);
     els.dbgNet.textContent = fmt(lastNet, 2);
-    els.dbgRot.textContent = fmt(lastRaw.rot, 1) + "°/s";
+    els.dbgYaw.textContent = fmt(lastRaw.yaw, 1) + "°/s";
+    els.dbgRot.textContent = fmt(lastRaw.roll, 1) + "°/s";
     els.dbgHz.textContent = hz ? hz + " Hz" : "–";
 
     requestAnimationFrame(drawScope);
