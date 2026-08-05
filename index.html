@@ -861,6 +861,11 @@
   // No real backswing-plus-downswing is over this fast, no matter how magnitude tuning is
   // set — a hard time floor that doesn't depend on getting acceleration thresholds right.
   var MIN_SWING_MS = 450;
+  // A mid-backswing wobble can still reach impact-gate magnitude if the swing is brisk enough
+  // — but it gets there slowly, over a chunk of the backswing. A real downswing-to-impact rise
+  // is fast (~0.2-0.3s in real golf), so requiring the peak to be reached soon after the most
+  // recent quiet point (not just soon before it falls) catches what magnitude alone can't.
+  var RISE_MAX_MS = 600;
   // Per-sample EMA rate for baseline drift correction (~60Hz sampling) — small enough that a
   // real swing (a few hundred ms of large deviation) barely moves it, roughly a 10s time
   // constant for tracking slow thermal drift while genuinely at rest.
@@ -894,6 +899,7 @@
   var calibStart = 0;
   var swingStart = null; // {t, idx}
   var swingPeak = null; // {t, net}
+  var riseStartT = null; // time of the most recent quiet point the current rise began from
   var fallCount = 0;
   var lastNet = 0;
   var resultUntil = 0;
@@ -1047,6 +1053,7 @@
         state = "swinging";
         swingStart = { t: t, idx: buffer.length - 1 };
         swingPeak = { t: t, net: net };
+        riseStartT = t;
         fallCount = 0;
         setPhase("BACKSWING", "hot");
       }
@@ -1066,6 +1073,7 @@
       if (net < noiseStd * QUIET_MULTIPLIER && swingPeak.net < armThreshold * IMPACT_GATE_MULTIPLIER) {
         swingPeak = { t: t, net: net };
         fallCount = 0;
+        riseStartT = t;
       }
 
       var stalled = t - swingStart.t > 2500;
@@ -1073,7 +1081,8 @@
         state = "ready";
         setPhase("ARMED — SWING", "armed");
       } else if (fallCount >= 3 && (t - swingPeak.t) < 500 && swingPeak.net > armThreshold * IMPACT_GATE_MULTIPLIER
-                 && (t - swingStart.t) > MIN_SWING_MS) {
+                 && (t - swingStart.t) > MIN_SWING_MS
+                 && (swingPeak.t - riseStartT) < RISE_MAX_MS) {
         finalizeSwing(t);
       }
     } else if (state === "result") {
