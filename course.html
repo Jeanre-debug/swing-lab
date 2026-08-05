@@ -313,8 +313,11 @@ function resetBall() {
 
 // ---- Shot application ----
 var DEG2RAD = Math.PI / 180;
-var MIN_SPEED = 20, MAX_SPEED = 50; // m/s, tuned for game feel over a 150m hole, not realism
-var LAUNCH_LOFT_DEG = 13;
+// Ball-speed range at full power for a driver (loft 10.5, speedMult 1.0) — picked by working
+// backwards from real average driver carry (~210m) through plain no-drag projectile range
+// (V^2 sin(2θ)/g), which also lands PGA-average-ish driver ball speed (~75 m/s) for free.
+var BASE_MIN_SPEED = 25, BASE_MAX_SPEED = 76;
+var DEFAULT_LOFT = 10.5, DEFAULT_SPEED_MULT = 1.0;
 // pathVal/faceVal are accumulated-degree sensor proxies, not calibrated real angles —
 // these scale factors are a rough game-feel guess, tune once real swings are visible.
 var START_ANGLE_SCALE = 0.5;
@@ -332,21 +335,26 @@ function launchShot(shot) {
   var power = clamp(shot.power || 0, 1, 100);
   var pathVal = shot.pathVal || 0;
   var faceVal = shot.faceVal || 0;
+  var loftDeg = shot.loftDeg || DEFAULT_LOFT;
+  var speedMult = shot.speedMult || DEFAULT_SPEED_MULT;
 
   resetBall();
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
 
-  var speed = MIN_SPEED + (power / 100) * (MAX_SPEED - MIN_SPEED);
+  var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult;
   // +X in this scene is the golfer's right (camera faces -Z toward the hole). On the phone,
   // positive faceVal means CLOSED, which for a right-handed golfer starts/curves the ball
   // LEFT (-X) — so both terms need the sign flipped to land in the correct direction here.
   var startAngleDeg = clamp(-faceVal * START_ANGLE_SCALE, -32, 32);
-  flightCurveStrength = clamp(-(faceVal - pathVal) * CURVE_SCALE, -1, 1);
+  // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
+  // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
+  var curveMultiplier = clamp(12 / loftDeg, 0.2, 1.3);
+  flightCurveStrength = clamp(-(faceVal - pathVal) * CURVE_SCALE * curveMultiplier, -1, 1);
 
   var angleRad = startAngleDeg * DEG2RAD;
-  var loftRad = LAUNCH_LOFT_DEG * DEG2RAD;
+  var loftRad = loftDeg * DEG2RAD;
 
   ballBody.velocity.set(
     speed * Math.sin(angleRad) * Math.cos(loftRad),
@@ -355,7 +363,10 @@ function launchShot(shot) {
   );
 
   els.lastShot.innerHTML = "–<span class=\"unit\">m</span>";
-  els.shotLine.textContent = shot.shot ? shot.shot + " · PWR " + Math.round(power) : "";
+  var line = shot.clubName ? shot.clubName : "";
+  if (shot.shot) line += (line ? " · " : "") + shot.shot;
+  line += (line ? " · " : "") + "PWR " + Math.round(power);
+  els.shotLine.textContent = line;
 }
 
 // ---- WebSocket ----

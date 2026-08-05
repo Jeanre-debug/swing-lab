@@ -277,6 +277,122 @@
     border: 2px solid var(--bg);
   }
 
+  .club-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .club-row .label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .club-pill {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--paper);
+    font-family: var(--sans);
+    padding: 8px 8px 8px 14px;
+    border-radius: 999px;
+  }
+  .club-pill .club-name { font-size: 13px; font-weight: 600; }
+  .club-pill .club-loft { font-family: var(--mono); font-size: 11.5px; color: var(--sand); font-variant-numeric: tabular-nums; }
+  .club-pill .chevrons {
+    display: flex; flex-direction: column; gap: 1px;
+    color: var(--muted); font-size: 8px; line-height: 1;
+    background: var(--panel); border-radius: 50%; width: 22px; height: 22px;
+    align-items: center; justify-content: center;
+  }
+  .club-pill:focus-visible { outline: 2px solid var(--sand); }
+
+  .picker-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 8, 5, 0.55);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 20;
+  }
+  .picker-overlay.show { opacity: 1; pointer-events: auto; }
+
+  .picker-sheet {
+    width: 100%;
+    max-width: 440px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: 20px 20px 0 0;
+    padding: 6px 0 max(14px, env(safe-area-inset-bottom));
+    transform: translateY(100%);
+    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .picker-overlay.show .picker-sheet { transform: translateY(0); }
+
+  .picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .picker-header .title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--paper); }
+  .picker-header button {
+    appearance: none; border: none; background: none;
+    color: var(--turf); font-family: var(--sans); font-size: 14px; font-weight: 700;
+    padding: 4px 2px;
+  }
+  .picker-header button:focus-visible { outline: 2px solid var(--sand); }
+
+  .picker-wheel-wrap {
+    position: relative;
+    height: 220px;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    perspective: 700px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .picker-wheel-wrap::-webkit-scrollbar { display: none; }
+
+  .picker-highlight {
+    position: absolute;
+    left: 14px; right: 14px;
+    top: 50%;
+    height: 40px;
+    transform: translateY(-50%);
+    border-top: 1px solid var(--line-strong);
+    border-bottom: 1px solid var(--line-strong);
+    background: color-mix(in srgb, var(--turf) 7%, transparent);
+    border-radius: 8px;
+    pointer-events: none;
+  }
+
+  .picker-pad { height: 90px; scroll-snap-align: none; }
+
+  .picker-item {
+    height: 40px;
+    scroll-snap-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    will-change: transform, opacity;
+  }
+  .picker-item .n { font-family: var(--sans); font-size: 16px; font-weight: 600; color: var(--paper); }
+  .picker-item .l { font-family: var(--mono); font-size: 12px; color: var(--sand); font-variant-numeric: tabular-nums; }
+
   button#action {
     appearance: none;
     border: none;
@@ -425,6 +541,15 @@
       <span class="label">Firm</span>
     </div>
 
+    <div class="club-row">
+      <span class="label">Club</span>
+      <button class="club-pill" id="clubPill">
+        <span class="club-name" id="clubPillName">Driver</span>
+        <span class="club-loft" id="clubPillLoft">10.5&deg;</span>
+        <span class="chevrons"><span>&#9650;</span><span>&#9660;</span></span>
+      </button>
+    </div>
+
     <button id="action">Tap to Begin</button>
     <div class="hint" id="hint">Hold the phone like a club grip, then keep it still while it calibrates.</div>
   </div>
@@ -453,6 +578,18 @@
   </details>
 
   <footer>No course, no ball — this build only answers one question:<br>does swinging the phone feel like golf?</footer>
+</div>
+
+<div class="picker-overlay" id="pickerOverlay">
+  <div class="picker-sheet">
+    <div class="picker-header">
+      <span class="title">Select Club</span>
+      <button id="pickerDone">Done</button>
+    </div>
+    <div class="picker-wheel-wrap" id="pickerWheel">
+      <div class="picker-highlight"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -503,6 +640,109 @@
       socket.send(JSON.stringify(Object.assign({ type: "swing" }, payload)));
     }
   }
+
+  // Real loft angles. speedMult is what keeps distance ordering realistic: with plain
+  // no-drag projectile physics, a wedge's high loft alone would fly farther than a driver's
+  // low loft (closer to the 45 degree ideal range angle) — the opposite of reality. Real
+  // clubs also swing slower as loft increases (shorter shaft, shorter/partial swings), which
+  // is what actually keeps a driver the longest club — speedMult stands in for that.
+  var CLUBS = [
+    { id: "driver", name: "Driver", loft: 10.5, speedMult: 1.00 },
+    { id: "3w", name: "3 Wood", loft: 15, speedMult: 0.80 },
+    { id: "5w", name: "5 Wood", loft: 18, speedMult: 0.71 },
+    { id: "4i", name: "4 Iron", loft: 21, speedMult: 0.65 },
+    { id: "5i", name: "5 Iron", loft: 24, speedMult: 0.60 },
+    { id: "6i", name: "6 Iron", loft: 27, speedMult: 0.55 },
+    { id: "7i", name: "7 Iron", loft: 31, speedMult: 0.51 },
+    { id: "8i", name: "8 Iron", loft: 35, speedMult: 0.48 },
+    { id: "9i", name: "9 Iron", loft: 39, speedMult: 0.45 },
+    { id: "pw", name: "Pitching Wedge", loft: 44, speedMult: 0.41 },
+    { id: "sw", name: "Sand Wedge", loft: 56, speedMult: 0.37 },
+    { id: "lw", name: "Lob Wedge", loft: 60, speedMult: 0.33 }
+  ];
+  var ROW_H = 40;
+  var selectedClubIndex = 0;
+
+  var pk = {
+    overlay: $("pickerOverlay"), wheel: $("pickerWheel"), done: $("pickerDone"),
+    pill: $("clubPill"), pillName: $("clubPillName"), pillLoft: $("clubPillLoft")
+  };
+
+  var topPad = document.createElement("div");
+  topPad.className = "picker-pad";
+  pk.wheel.appendChild(topPad);
+  CLUBS.forEach(function (club, i) {
+    var item = document.createElement("div");
+    item.className = "picker-item";
+    item.dataset.index = i;
+    item.innerHTML = '<span class="n">' + club.name + '</span><span class="l">' + club.loft.toFixed(1) + '&deg;</span>';
+    item.addEventListener("click", function () { scrollToClubIndex(i, true); });
+    pk.wheel.appendChild(item);
+  });
+  var bottomPad = document.createElement("div");
+  bottomPad.className = "picker-pad";
+  pk.wheel.appendChild(bottomPad);
+
+  var wheelItems = Array.prototype.slice.call(pk.wheel.querySelectorAll(".picker-item"));
+
+  function applyWheelCurve() {
+    var wrapRect = pk.wheel.getBoundingClientRect();
+    var centerY = wrapRect.top + wrapRect.height / 2;
+    wheelItems.forEach(function (item) {
+      var r = item.getBoundingClientRect();
+      var offsetRows = (r.top + r.height / 2 - centerY) / ROW_H;
+      var angle = clamp(offsetRows * 22, -66, 66);
+      var depth = -Math.abs(offsetRows) * 14;
+      item.style.transform = "rotateX(" + angle + "deg) translateZ(" + depth + "px)";
+      item.style.opacity = clamp(1 - Math.abs(offsetRows) * 0.32, 0.15, 1);
+    });
+  }
+
+  var wheelRAF = null;
+  var wheelSettleTimer = null;
+  pk.wheel.addEventListener("scroll", function () {
+    if (!wheelRAF) wheelRAF = requestAnimationFrame(function () { applyWheelCurve(); wheelRAF = null; });
+    clearTimeout(wheelSettleTimer);
+    wheelSettleTimer = setTimeout(onWheelSettled, 120);
+  });
+
+  function onWheelSettled() {
+    var wrapRect = pk.wheel.getBoundingClientRect();
+    var centerY = wrapRect.top + wrapRect.height / 2;
+    var nearest = 0, nearestDist = Infinity;
+    wheelItems.forEach(function (item) {
+      var r = item.getBoundingClientRect();
+      var d = Math.abs(r.top + r.height / 2 - centerY);
+      if (d < nearestDist) { nearestDist = d; nearest = parseInt(item.dataset.index, 10); }
+    });
+    selectClub(nearest);
+  }
+
+  function scrollToClubIndex(i, smooth) {
+    var item = wheelItems[i];
+    if (!item) return;
+    var target = item.offsetTop - (pk.wheel.clientHeight - ROW_H) / 2;
+    pk.wheel.scrollTo({ top: target, behavior: smooth ? "smooth" : "auto" });
+  }
+
+  function selectClub(i) {
+    selectedClubIndex = clamp(i, 0, CLUBS.length - 1);
+    var club = CLUBS[selectedClubIndex];
+    pk.pillName.textContent = club.name;
+    pk.pillLoft.textContent = club.loft.toFixed(1) + "°";
+  }
+
+  pk.pill.addEventListener("click", function () {
+    pk.overlay.classList.add("show");
+    scrollToClubIndex(selectedClubIndex, false);
+    requestAnimationFrame(applyWheelCurve);
+  });
+  pk.done.addEventListener("click", function () { pk.overlay.classList.remove("show"); });
+  pk.overlay.addEventListener("click", function (e) {
+    if (e.target === pk.overlay) pk.overlay.classList.remove("show");
+  });
+
+  selectClub(0);
 
   var canvas = $("scope");
   var ctx = canvas.getContext("2d");
@@ -679,7 +919,11 @@
     history = history.slice(0, 5);
     renderHistory();
 
-    sendSwing({ power: power, pathVal: pathVal, faceVal: faceVal, tempo: tempoRatio, shot: shotName });
+    var club = CLUBS[selectedClubIndex];
+    sendSwing({
+      power: power, pathVal: pathVal, faceVal: faceVal, tempo: tempoRatio, shot: shotName,
+      club: club.id, clubName: club.name, loftDeg: club.loft, speedMult: club.speedMult
+    });
 
     setPhase("IMPACT!", "impact");
     setDot("impact");
