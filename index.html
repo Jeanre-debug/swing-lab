@@ -527,6 +527,30 @@
   .dbg-pass { color: var(--turf); }
   .dbg-fail { color: var(--flag); font-weight: 700; }
 
+  .dbg-q-label {
+    font-family: var(--sans);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sand);
+    margin-top: 8px;
+  }
+  .dbg-q { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .dbg-q-btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 5px 9px;
+    border-radius: 999px;
+  }
+  .dbg-q-btn:focus-visible { outline: 2px solid var(--sand); }
+  .dbg-q-btn.sel { background: var(--sand); border-color: var(--sand); color: #2a1f0d; }
+
   footer {
     text-align: center;
     font-size: 11px;
@@ -937,6 +961,7 @@
   var attemptRearmCount = 0;
   var attemptLastT = null;
   var debugLog = [];
+  var debugLogIdCounter = 0;
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -1067,8 +1092,10 @@
     var sincePeak = t - swingPeak.t;
     var elapsedSec = Math.max(totalDur, 1) / 1000;
     debugLog.unshift({
+      id: ++debugLogIdCounter,
       time: t,
       outcome: outcome,
+      feltPhase: null,
       peak: swingPeak.net,
       gate: gate,
       gatePass: swingPeak.net > gate,
@@ -1095,6 +1122,12 @@
     renderDebugLog();
   }
 
+  // What matters here is closing the gap neither of us can see across otherwise: the sensor
+  // timeline says WHEN something happened, but not WHERE in your actual physical swing that
+  // was. Your tapped answer gets baked directly into the entry so a screenshot carries both.
+  var SWING_PHASE_OPTIONS = ["Impact (correct)", "Top of backswing", "Mid-backswing", "Early downswing", "After impact"];
+  var STALL_PHASE_OPTIONS = ["Full swing, no trigger", "Stopped partway", "Long pause at top", "Very fast swing", "Not sure"];
+
   function renderDebugLog() {
     var el = $("debugLogList");
     if (!el) return;
@@ -1107,6 +1140,13 @@
       var head = e.outcome === "SWING"
         ? "SWING — " + (e.extra ? e.extra.shotName + " · PWR " + e.extra.power : "")
         : "STALLED — no impact in 2.5s";
+      var qLabel = e.outcome === "SWING" ? "Where did it actually fire?" : "What actually happened?";
+      var options = e.outcome === "SWING" ? SWING_PHASE_OPTIONS : STALL_PHASE_OPTIONS;
+      var qRow = '<div class="dbg-q-label">' + qLabel + '</div>' +
+        '<div class="dbg-row dbg-q" data-entry-id="' + e.id + '">' +
+        options.map(function (opt) {
+          return '<button class="dbg-q-btn' + (e.feltPhase === opt ? " sel" : "") + '" data-answer="' + opt + '">' + opt + '</button>';
+        }).join("") + '</div>';
       return '<div class="dbg-entry ' + (e.outcome === "SWING" ? "dbg-ok" : "dbg-bad") + '">' +
         '<div class="dbg-head">' + head + '</div>' +
         '<div class="dbg-row">' + chk(e.gatePass, "peak " + e.peak.toFixed(2) + " / gate " + e.gate.toFixed(2)) + '</div>' +
@@ -1116,9 +1156,21 @@
         '<div class="dbg-row">' + chk(e.sincePeakPass, "since peak " + Math.round(e.sincePeak) + "ms (need <500ms)") + '</div>' +
         '<div class="dbg-row dbg-muted">samples ' + e.sampleCount + " · " + e.avgHz + "Hz avg · max gap " + e.maxGapMs + "ms · re-arms " + e.rearmCount + '</div>' +
         '<div class="dbg-row dbg-muted">baseline ' + e.baseline.toFixed(2) + " · noise σ " + e.noiseStd.toFixed(3) + " · armThreshold " + e.armThreshold.toFixed(2) + '</div>' +
+        qRow +
         '</div>';
     }).join("");
   }
+
+  $("debugLogList").addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".dbg-q-btn");
+    if (!btn) return;
+    var wrap = btn.closest(".dbg-q");
+    var id = parseInt(wrap.dataset.entryId, 10);
+    var entry = debugLog.filter(function (e) { return e.id === id; })[0];
+    if (!entry) return;
+    entry.feltPhase = btn.dataset.answer;
+    renderDebugLog();
+  });
 
   function finalizeSwing(nowT) {
     var peakT = swingPeak.t;
