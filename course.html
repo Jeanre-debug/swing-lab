@@ -89,15 +89,58 @@
     min-height: 14px;
   }
 
-  .bottom-bar {
+  .hud-left { display: flex; flex-direction: column; gap: 10px; }
+
+  .eyebrow { font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+
+  .minimap-panel { padding: 10px 10px 12px; }
+  .minimap-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px 8px; }
+  .minimap-length { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--sand); }
+  .minimap-length .unit { font-size: 10px; color: var(--muted); margin-left: 2px; }
+  canvas#minimap { display: block; border-radius: 8px; background: #2f5233; }
+
+  .bottom-stack {
     position: fixed;
     left: 0; right: 0; bottom: 0;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
     padding: 16px;
     pointer-events: none;
   }
-  .bottom-bar > * { pointer-events: auto; }
+  .bottom-stack > * { pointer-events: auto; }
+
+  .power-wrap { width: 260px; padding: 10px 14px; }
+  .power-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
+  .power-label #powerState.hot { color: var(--sand); }
+  .power-label #powerState.practice { color: var(--sand); }
+  .power-num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--paper); font-size: 12px; }
+  .power-track { height: 10px; border-radius: 999px; background: var(--panel-raised); border: 1px solid var(--line); overflow: hidden; }
+  .power-fill { height: 100%; width: 0%; border-radius: 999px; background: var(--turf); transition: width 0.05s linear, background 0.15s ease; }
+  .power-fill.hi { background: var(--flag); }
+
+  .bottom-bar { display: flex; align-items: center; gap: 10px; }
+  .aim-btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    color: var(--paper);
+    font-size: 16px;
+    font-weight: 700;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    backdrop-filter: blur(6px);
+  }
+  .aim-btn:focus-visible { outline: 2px solid var(--sand); }
+  .aim-readout {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--paper);
+    padding: 9px 14px;
+  }
   button#reset {
     appearance: none;
     border: 1px solid var(--line-strong);
@@ -118,10 +161,20 @@
 <div id="viewport"></div>
 
 <div class="hud">
-  <div class="panel connect">
-    <span class="status" id="status"><span class="dot"></span><span id="statusText">Offline</span></span>
-    <input id="serverUrl" placeholder="wss://your-tunnel.trycloudflare.com" autocomplete="off" spellcheck="false">
-    <button id="connectBtn">Connect</button>
+  <div class="hud-left">
+    <div class="panel connect">
+      <span class="status" id="status"><span class="dot"></span><span id="statusText">Offline</span></span>
+      <input id="serverUrl" placeholder="wss://your-tunnel.trycloudflare.com" autocomplete="off" spellcheck="false">
+      <button id="connectBtn">Connect</button>
+    </div>
+
+    <div class="panel minimap-panel">
+      <div class="minimap-head">
+        <span class="eyebrow">Hole</span>
+        <span class="minimap-length" id="holeLength">–<span class="unit">m</span></span>
+      </div>
+      <canvas id="minimap" width="168" height="230"></canvas>
+    </div>
   </div>
 
   <div class="panel readout-stack">
@@ -137,8 +190,21 @@
   </div>
 </div>
 
-<div class="bottom-bar">
-  <button id="reset">Reset to Tee</button>
+<div class="bottom-stack">
+  <div class="power-wrap panel">
+    <div class="power-label">
+      <span id="powerState">Armed</span>
+      <span class="power-num" id="powerNum">0</span>
+    </div>
+    <div class="power-track"><div class="power-fill" id="powerFill"></div></div>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="aim-btn" id="aimLeft">&#8249;</button>
+    <div class="aim-readout panel">AIM <span id="aimVal">0&deg;</span></div>
+    <button class="aim-btn" id="aimRight">&#8250;</button>
+    <button id="reset">Reset to Tee</button>
+  </div>
 </div>
 
 <script type="importmap">
@@ -432,6 +498,95 @@ function resetBall() {
   settled = true;
   cameraMode = "tee";
   els.toPin.innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
+  document.getElementById("holeLength").innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
+}
+
+// ---- Minimap ----
+// Static terrain is cached to an offscreen canvas once when the hole is built (cheap to reuse
+// every frame); the ball dot and aim line are the only things redrawn on top each tick.
+var loadedCourse = null;
+var mmCanvas = document.getElementById("minimap");
+var mmCtx = mmCanvas.getContext("2d");
+var MM_W = mmCanvas.width, MM_H = mmCanvas.height;
+var mmBg = document.createElement("canvas");
+mmBg.width = MM_W; mmBg.height = MM_H;
+var mmBgCtx = mmBg.getContext("2d");
+var mmScale = 1, mmOffX = 0, mmOffZ = 0;
+var MM_TYPE_COLOR = { rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a", bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e" };
+
+function worldToMM(x, z) {
+  return { x: mmOffX + x * mmScale, y: mmOffZ + z * mmScale };
+}
+
+function buildMinimapBackground(course) {
+  var minX, maxX, minZ, maxZ;
+  if (course) {
+    var cols = course.grid_cols, rows = course.grid_rows, ts = course.tile_size || 5;
+    minX = -cols / 2 * ts; maxX = cols / 2 * ts; minZ = -rows * ts; maxZ = 0;
+  } else {
+    minX = -22; maxX = 22; minZ = HOLE_POS.z - 12; maxZ = TEE_POS.z + 12;
+  }
+  var worldW = maxX - minX, worldH = maxZ - minZ;
+  mmScale = Math.min(MM_W / worldW, MM_H / worldH) * 0.9;
+  mmOffX = MM_W / 2 - (minX + maxX) / 2 * mmScale;
+  mmOffZ = MM_H / 2 - (minZ + maxZ) / 2 * mmScale;
+
+  mmBgCtx.fillStyle = "#2f5233";
+  mmBgCtx.fillRect(0, 0, MM_W, MM_H);
+
+  if (course) {
+    var cols = course.grid_cols, rows = course.grid_rows, ts = course.tile_size || 5;
+    var grid = [];
+    for (var y = 0; y < rows; y++) grid.push(new Array(cols).fill("rough"));
+    (course.tiles || []).forEach(function (t) { if (grid[t.y]) grid[t.y][t.x] = t.type; });
+    var cellW = Math.max(1, ts * mmScale), cellH = Math.max(1, ts * mmScale);
+    for (var ty = 0; ty < rows; ty++) {
+      for (var tx = 0; tx < cols; tx++) {
+        var w = { x: (tx - cols / 2) * ts, z: -ty * ts };
+        var p = worldToMM(w.x, w.z);
+        mmBgCtx.fillStyle = MM_TYPE_COLOR[grid[ty][tx]] || MM_TYPE_COLOR.rough;
+        mmBgCtx.fillRect(p.x - cellW / 2, p.y - cellH / 2, cellW + 0.5, cellH + 0.5);
+      }
+    }
+  } else {
+    var teePt = worldToMM(TEE_POS.x, TEE_POS.z), holePt = worldToMM(HOLE_POS.x, HOLE_POS.z);
+    mmBgCtx.strokeStyle = "#5a9c5f";
+    mmBgCtx.lineWidth = Math.max(6, DEFAULT_FAIRWAY_WIDTH * mmScale);
+    mmBgCtx.lineCap = "round";
+    mmBgCtx.beginPath(); mmBgCtx.moveTo(teePt.x, teePt.y); mmBgCtx.lineTo(holePt.x, holePt.y); mmBgCtx.stroke();
+  }
+
+  var teeDot = worldToMM(TEE_POS.x, TEE_POS.z);
+  mmBgCtx.fillStyle = "#d9b877";
+  mmBgCtx.beginPath(); mmBgCtx.arc(teeDot.x, teeDot.y, 3, 0, Math.PI * 2); mmBgCtx.fill();
+
+  var holeDot = worldToMM(HOLE_POS.x, HOLE_POS.z);
+  mmBgCtx.fillStyle = "#e8543f";
+  mmBgCtx.beginPath(); mmBgCtx.arc(holeDot.x, holeDot.y, 3.5, 0, Math.PI * 2); mmBgCtx.fill();
+}
+
+function drawMinimapFrame() {
+  if (!ballBody) return;
+  mmCtx.clearRect(0, 0, MM_W, MM_H);
+  mmCtx.drawImage(mmBg, 0, 0);
+
+  if (cameraMode === "tee") {
+    var aim = rotateBasis(aimOffsetDeg);
+    var end = { x: ballBody.position.x + aim.fwd.x * HOLE_DISTANCE * 0.4, z: ballBody.position.z + aim.fwd.z * HOLE_DISTANCE * 0.4 };
+    var p1 = worldToMM(ballBody.position.x, ballBody.position.z);
+    var p2 = worldToMM(end.x, end.z);
+    mmCtx.strokeStyle = "#e8543f";
+    mmCtx.lineWidth = 1.5;
+    mmCtx.setLineDash([3, 3]);
+    mmCtx.beginPath(); mmCtx.moveTo(p1.x, p1.y); mmCtx.lineTo(p2.x, p2.y); mmCtx.stroke();
+    mmCtx.setLineDash([]);
+  }
+
+  var ballPt = worldToMM(ballBody.position.x, ballBody.position.z);
+  mmCtx.fillStyle = "#eef2ea";
+  mmCtx.strokeStyle = "rgba(0,0,0,0.4)";
+  mmCtx.lineWidth = 1;
+  mmCtx.beginPath(); mmCtx.arc(ballPt.x, ballPt.y, 3, 0, Math.PI * 2); mmCtx.fill(); mmCtx.stroke();
 }
 
 // ---- Shot application ----
@@ -451,8 +606,37 @@ var flightCurveStrength = 0;
 var shotStartPos = null;
 var settled = true;
 var cameraMode = "tee"; // tee | flight | result
+var shotRight = { x: 1, z: 0 }; // RIGHT used by the shot in flight, captured at launch (see aim below)
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ---- Aim ----
+// Player-controlled offset from the tee->hole bearing (FWD), so a shot doesn't always have to
+// go dead straight at the pin. Camera stays anchored to the real hole bearing regardless —
+// only the launched ball's direction uses the aimed vectors.
+var aimOffsetDeg = 0;
+var AIM_STEP = 2, AIM_MAX = 45;
+
+function rotateBasis(deg) {
+  var rad = deg * DEG2RAD;
+  var c = Math.cos(rad), s = Math.sin(rad);
+  return {
+    fwd: { x: FWD.x * c + RIGHT.x * s, z: FWD.z * c + RIGHT.z * s },
+    right: { x: RIGHT.x * c - FWD.x * s, z: RIGHT.z * c - FWD.z * s }
+  };
+}
+
+function setAim(deg) {
+  aimOffsetDeg = clamp(deg, -AIM_MAX, AIM_MAX);
+  document.getElementById("aimVal").textContent = Math.round(aimOffsetDeg) + "°";
+  drawMinimapFrame();
+}
+document.getElementById("aimLeft").addEventListener("click", function () { setAim(aimOffsetDeg - AIM_STEP); });
+document.getElementById("aimRight").addEventListener("click", function () { setAim(aimOffsetDeg + AIM_STEP); });
+window.addEventListener("keydown", function (e) {
+  if (e.key === "ArrowLeft") setAim(aimOffsetDeg - AIM_STEP);
+  if (e.key === "ArrowRight") setAim(aimOffsetDeg + AIM_STEP);
+});
 
 function launchShot(shot) {
   var power = clamp(shot.power || 0, 1, 100);
@@ -466,10 +650,13 @@ function launchShot(shot) {
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
 
+  var aim = rotateBasis(aimOffsetDeg);
+  shotRight = aim.right;
+
   var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult;
-  // RIGHT is the golfer's right (perpendicular to the tee->hole bearing, FWD). On the phone,
-  // positive faceVal means CLOSED, which for a right-handed golfer starts/curves the ball
-  // LEFT — so both terms need the sign flipped to land in the correct direction here.
+  // shotRight is the golfer's right after aim (perpendicular to the aimed direction). On the
+  // phone, positive faceVal means CLOSED, which for a right-handed golfer starts/curves the
+  // ball LEFT — so both terms need the sign flipped to land in the correct direction here.
   var startAngleDeg = clamp(-faceVal * START_ANGLE_SCALE, -32, 32);
   // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
   // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
@@ -482,9 +669,9 @@ function launchShot(shot) {
   var sideSpeed = speed * Math.sin(angleRad) * Math.cos(loftRad);
 
   ballBody.velocity.set(
-    FWD.x * forwardSpeed + RIGHT.x * sideSpeed,
+    aim.fwd.x * forwardSpeed + shotRight.x * sideSpeed,
     speed * Math.sin(loftRad),
-    FWD.z * forwardSpeed + RIGHT.z * sideSpeed
+    aim.fwd.z * forwardSpeed + shotRight.z * sideSpeed
   );
 
   els.lastShot.innerHTML = "–<span class=\"unit\">m</span>";
@@ -502,11 +689,43 @@ var els = {
   connectBtn: document.getElementById("connectBtn"),
   toPin: document.getElementById("toPin"),
   lastShot: document.getElementById("lastShot"),
-  shotLine: document.getElementById("shotLine")
+  shotLine: document.getElementById("shotLine"),
+  powerFill: document.getElementById("powerFill"),
+  powerNum: document.getElementById("powerNum"),
+  powerState: document.getElementById("powerState")
 };
 
 var STORAGE_KEY = "swingLabServerUrl";
 els.serverUrl.value = localStorage.getItem(STORAGE_KEY) || "";
+
+// ---- Power bar ----
+// Driven live by "power" messages the phone streams throughout the swing (not just the final
+// number at impact), so this fills up in real time as the swing happens.
+function setPowerBar(power, hot) {
+  els.powerFill.style.width = clamp(power, 0, 100) + "%";
+  els.powerFill.classList.toggle("hi", power > 85);
+  els.powerNum.textContent = Math.round(power);
+  els.powerState.classList.toggle("hot", hot && power > 4);
+}
+
+var practiceFlashTimer = null;
+function showPracticeSwing(shot) {
+  var power = clamp(shot.power || 0, 0, 100);
+  setPowerBar(power, true);
+  els.powerState.textContent = "Practice";
+  els.powerState.classList.add("practice");
+  var line = shot.clubName ? shot.clubName : "";
+  if (shot.shot) line += (line ? " · " : "") + shot.shot;
+  line += (line ? " · " : "") + "PWR " + Math.round(power) + " (practice)";
+  els.shotLine.textContent = line;
+
+  clearTimeout(practiceFlashTimer);
+  practiceFlashTimer = setTimeout(function () {
+    setPowerBar(0, false);
+    els.powerState.textContent = "Armed";
+    els.powerState.classList.remove("practice");
+  }, 1400);
+}
 
 var socket = null;
 function connect() {
@@ -531,7 +750,16 @@ function connect() {
   socket.onmessage = function (ev) {
     try {
       var msg = JSON.parse(ev.data);
-      if (msg.type === "swing") launchShot(msg);
+      if (msg.type === "swing") {
+        els.powerState.textContent = "Armed";
+        els.powerState.classList.remove("practice");
+        launchShot(msg);
+      } else if (msg.type === "practice") {
+        showPracticeSwing(msg);
+      } else if (msg.type === "power") {
+        els.powerState.textContent = msg.power > 4 ? "Swinging" : "Armed";
+        setPowerBar(msg.power, true);
+      }
     } catch (e) { /* ignore malformed frames */ }
   };
 }
@@ -548,8 +776,8 @@ function animate() {
   if (!settled) {
     var airborne = ballBody.position.y > BALL_RADIUS + 0.05;
     if (airborne && flightCurveStrength !== 0) {
-      ballBody.velocity.x += RIGHT.x * flightCurveStrength * CURVE_ACCEL * dt;
-      ballBody.velocity.z += RIGHT.z * flightCurveStrength * CURVE_ACCEL * dt;
+      ballBody.velocity.x += shotRight.x * flightCurveStrength * CURVE_ACCEL * dt;
+      ballBody.velocity.z += shotRight.z * flightCurveStrength * CURVE_ACCEL * dt;
     }
   }
 
@@ -584,6 +812,7 @@ function animate() {
     camera.lookAt(ballMesh.position.x + FWD.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + FWD.z * 6);
   }
 
+  drawMinimapFrame();
   renderer.render(scene, camera);
 }
 
@@ -601,8 +830,9 @@ var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
       });
       var rows = await res.json();
       if (rows && rows[0]) {
-        buildTileHole(rows[0]);
-        document.title = "Swing Lab — " + (rows[0].name || "Course");
+        loadedCourse = rows[0];
+        buildTileHole(loadedCourse);
+        document.title = "Swing Lab — " + (loadedCourse.name || "Course");
       } else {
         buildDefaultHole();
       }
@@ -612,6 +842,7 @@ var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
   } else {
     buildDefaultHole();
   }
+  buildMinimapBackground(loadedCourse);
   startGameplay();
 })();
 </script>
