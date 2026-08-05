@@ -651,7 +651,10 @@
   var WS_STORAGE_KEY = "swingLabServerUrl";
   var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
   var socket = null;
-  els.wsUrl.value = localStorage.getItem(WS_STORAGE_KEY) || DEFAULT_WS_URL;
+  var storedWsUrl = localStorage.getItem(WS_STORAGE_KEY);
+  // Old sessions have a now-dead cloudflare quick-tunnel URL cached — that tunnel is gone for
+  // good (it only ever lived as long as the local process did), so it's never worth keeping.
+  els.wsUrl.value = (storedWsUrl && storedWsUrl.indexOf("trycloudflare.com") === -1) ? storedWsUrl : DEFAULT_WS_URL;
 
   function connectSocket() {
     var url = els.wsUrl.value.trim();

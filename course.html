@@ -909,7 +909,10 @@ var els = {
 
 var STORAGE_KEY = "swingLabServerUrl";
 var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
-els.serverUrl.value = localStorage.getItem(STORAGE_KEY) || DEFAULT_WS_URL;
+var storedServerUrl = localStorage.getItem(STORAGE_KEY);
+// Old sessions have a now-dead cloudflare quick-tunnel URL cached — that tunnel is gone for
+// good (it only ever lived as long as the local process did), so it's never worth keeping.
+els.serverUrl.value = (storedServerUrl && storedServerUrl.indexOf("trycloudflare.com") === -1) ? storedServerUrl : DEFAULT_WS_URL;
 
 // ---- Power bar ----
 // Driven live by "power" messages the phone streams throughout the swing (not just the final
