@@ -515,6 +515,9 @@
   // by fall-count alone. Requiring the peak to clearly clear the backswing's scale before it
   // can count as impact is what keeps that settle from being mistaken for the finish.
   var IMPACT_GATE_MULTIPLIER = 2.0;
+  // How close to the calibrated baseline still reads as "paused/still" — used to catch an
+  // explicit top-of-backswing pause directly, rather than only guessing from peak magnitude.
+  var QUIET_MULTIPLIER = 2.5;
   // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
   var PATH_EPS = 14;
   var FACE_EPS = 8;
@@ -698,6 +701,15 @@
         if (net > armThreshold * 1.6) setPhase("DOWNSWING", "hot");
       } else {
         fallCount++;
+      }
+
+      // A real pause at the top of the backswing returns to near address-stillness before the
+      // downswing starts — a much more direct signal than any peak-magnitude ratio. Whenever
+      // that happens before we've reached real downswing scale, re-arm tracking from here so
+      // the stale backswing-hump peak/fall-count can't carry into the impact check below.
+      if (net < noiseStd * QUIET_MULTIPLIER && swingPeak.net < armThreshold * IMPACT_GATE_MULTIPLIER) {
+        swingPeak = { t: t, net: net };
+        fallCount = 0;
       }
 
       var stalled = t - swingStart.t > 2500;
