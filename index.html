@@ -518,6 +518,9 @@
   // How close to the calibrated baseline still reads as "paused/still" — used to catch an
   // explicit top-of-backswing pause directly, rather than only guessing from peak magnitude.
   var QUIET_MULTIPLIER = 2.5;
+  // No real backswing-plus-downswing is over this fast, no matter how magnitude tuning is
+  // set — a hard time floor that doesn't depend on getting acceleration thresholds right.
+  var MIN_SWING_MS = 450;
   // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
   var PATH_EPS = 14;
   var FACE_EPS = 8;
@@ -716,7 +719,8 @@
       if (stalled) {
         state = "ready";
         setPhase("ARMED — SWING", "armed");
-      } else if (fallCount >= 3 && (t - swingPeak.t) < 500 && swingPeak.net > armThreshold * IMPACT_GATE_MULTIPLIER) {
+      } else if (fallCount >= 3 && (t - swingPeak.t) < 500 && swingPeak.net > armThreshold * IMPACT_GATE_MULTIPLIER
+                 && (t - swingStart.t) > MIN_SWING_MS) {
         finalizeSwing(t);
       }
     } else if (state === "result") {
