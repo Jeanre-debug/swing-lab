@@ -71,6 +71,57 @@
   }
   .warning.show { display: block; }
 
+  .connect-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .connect-row .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .connect-row .status .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted-dim);
+  }
+  .connect-row .status.live { color: var(--turf); }
+  .connect-row .status.live .dot { background: var(--turf); box-shadow: 0 0 0 3px color-mix(in srgb, var(--turf) 20%, transparent); }
+  .connect-row input {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 8px 9px;
+    border-radius: 8px;
+    outline: none;
+  }
+  .connect-row input:focus-visible { outline: 2px solid var(--sand); }
+  .connect-row button {
+    appearance: none;
+    border: none;
+    background: var(--turf);
+    color: #06170d;
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 9px 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .connect-row button:focus-visible { outline: 2px solid var(--sand); }
+
   .panel {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -329,6 +380,12 @@
 
   <div class="warning" id="warning"></div>
 
+  <div class="panel connect-row">
+    <span class="status" id="wsStatus"><span class="dot"></span><span id="wsStatusText">Offline</span></span>
+    <input id="wsUrl" placeholder="wss://your-tunnel.trycloudflare.com" autocomplete="off" spellcheck="false">
+    <button id="wsConnect">Connect</button>
+  </div>
+
   <div class="panel">
     <div class="status-strip">
       <div class="phase" id="phase">IDLE</div>
@@ -410,8 +467,42 @@
     historyList: $("historyList"), clear: $("clear"),
     dbgBaseline: $("dbgBaseline"), dbgNoise: $("dbgNoise"),
     dbgThreshold: $("dbgThreshold"), dbgNet: $("dbgNet"),
-    dbgYaw: $("dbgYaw"), dbgRot: $("dbgRot"), dbgHz: $("dbgHz")
+    dbgYaw: $("dbgYaw"), dbgRot: $("dbgRot"), dbgHz: $("dbgHz"),
+    wsStatus: $("wsStatus"), wsStatusText: $("wsStatusText"), wsUrl: $("wsUrl"), wsConnect: $("wsConnect")
   };
+
+  var WS_STORAGE_KEY = "swingLabServerUrl";
+  var socket = null;
+  els.wsUrl.value = localStorage.getItem(WS_STORAGE_KEY) || "";
+
+  function connectSocket() {
+    var url = els.wsUrl.value.trim();
+    if (!url) return;
+    localStorage.setItem(WS_STORAGE_KEY, url);
+    if (socket) socket.close();
+
+    socket = new WebSocket(url);
+    socket.onopen = function () {
+      els.wsStatus.classList.add("live");
+      els.wsStatusText.textContent = "Live";
+    };
+    socket.onclose = function () {
+      els.wsStatus.classList.remove("live");
+      els.wsStatusText.textContent = "Offline";
+    };
+    socket.onerror = function () {
+      els.wsStatus.classList.remove("live");
+      els.wsStatusText.textContent = "Error";
+    };
+  }
+  els.wsConnect.addEventListener("click", connectSocket);
+  if (els.wsUrl.value) connectSocket();
+
+  function sendSwing(payload) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(Object.assign({ type: "swing" }, payload)));
+    }
+  }
 
   var canvas = $("scope");
   var ctx = canvas.getContext("2d");
@@ -572,6 +663,8 @@
     });
     history = history.slice(0, 5);
     renderHistory();
+
+    sendSwing({ power: power, pathVal: pathVal, faceVal: faceVal, tempo: tempoRatio, shot: shotName });
 
     setPhase("IMPACT!", "impact");
     setDot("impact");

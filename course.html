@@ -1,0 +1,451 @@
+<title>Swing Lab — Course</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+  :root {
+    --bg: #0c120e;
+    --panel: #131b15;
+    --panel-raised: #182219;
+    --line: #26332a;
+    --line-strong: #364638;
+    --turf: #4bab6d;
+    --flag: #e8543f;
+    --sand: #d9b877;
+    --paper: #eef2ea;
+    --muted: #8a9a8f;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #7ec8e3; color: var(--paper); font-family: var(--sans); overflow: hidden; }
+  #viewport { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .hud {
+    position: fixed;
+    left: 0; right: 0; top: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 14px 16px;
+    pointer-events: none;
+  }
+  .hud > * { pointer-events: auto; }
+
+  .panel {
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+    backdrop-filter: blur(6px);
+  }
+
+  .connect { display: flex; align-items: center; gap: 8px; }
+  .connect input {
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    width: 210px;
+    outline: none;
+  }
+  .connect input:focus-visible { outline: 2px solid var(--sand); }
+  .connect button {
+    appearance: none;
+    border: none;
+    background: var(--turf);
+    color: #06170d;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 8px 12px;
+    border-radius: 7px;
+  }
+  .connect button:focus-visible { outline: 2px solid var(--sand); }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status.live .dot { background: var(--turf); box-shadow: 0 0 0 3px color-mix(in srgb, var(--turf) 25%, transparent); }
+  .status.live { color: var(--turf); }
+
+  .readout-stack { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  .readout {
+    text-align: right;
+    min-width: 150px;
+  }
+  .readout .label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .readout .val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .readout .val .unit { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+
+  .shot-line {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--sand);
+    margin-top: 2px;
+    min-height: 14px;
+  }
+
+  .bottom-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    justify-content: center;
+    padding: 16px;
+    pointer-events: none;
+  }
+  .bottom-bar > * { pointer-events: auto; }
+  button#reset {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 10px 22px;
+    border-radius: 999px;
+    backdrop-filter: blur(6px);
+  }
+  button#reset:focus-visible { outline: 2px solid var(--sand); }
+</style>
+
+<div id="viewport"></div>
+
+<div class="hud">
+  <div class="panel connect">
+    <span class="status" id="status"><span class="dot"></span><span id="statusText">Offline</span></span>
+    <input id="serverUrl" placeholder="wss://your-tunnel.trycloudflare.com" autocomplete="off" spellcheck="false">
+    <button id="connectBtn">Connect</button>
+  </div>
+
+  <div class="panel readout-stack">
+    <div class="readout">
+      <div class="label">To Pin</div>
+      <div class="val" id="toPin">–<span class="unit">m</span></div>
+    </div>
+    <div class="readout">
+      <div class="label">Last Shot</div>
+      <div class="val" id="lastShot">–<span class="unit">m</span></div>
+      <div class="shot-line" id="shotLine"></div>
+    </div>
+  </div>
+</div>
+
+<div class="bottom-bar">
+  <button id="reset">Reset to Tee</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from "three";
+import * as CANNON from "cannon-es";
+
+// ---- Hole layout (hardcoded — Phase 1 has no course builder) ----
+var TEE_Z = 6;
+var HOLE_DISTANCE = 150;
+var HOLE_Z = TEE_Z - HOLE_DISTANCE;
+var FAIRWAY_WIDTH = 18;
+var BALL_RADIUS = 0.45;
+
+// ---- Renderer / scene ----
+var viewport = document.getElementById("viewport");
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+viewport.appendChild(renderer.domElement);
+
+var scene = new THREE.Scene();
+var skyColor = 0x7ec8e3;
+scene.background = new THREE.Color(skyColor);
+scene.fog = new THREE.Fog(skyColor, 60, 220);
+
+var camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 800);
+camera.position.set(0, 2.6, TEE_Z + 7);
+
+window.addEventListener("resize", function () {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---- Lighting ----
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x2f5233, 0.9));
+var sun = new THREE.DirectionalLight(0xfff2d8, 1.1);
+sun.position.set(40, 60, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.left = -60;
+sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60;
+sun.shadow.camera.bottom = -80;
+scene.add(sun);
+
+// ---- Low-poly terrain helper ----
+function makeGround(width, length, segX, segZ, amplitude, color, z) {
+  var geo = new THREE.PlaneGeometry(width, length, segX, segZ);
+  geo.rotateX(-Math.PI / 2);
+  var pos = geo.attributes.position;
+  for (var i = 0; i < pos.count; i++) {
+    var x = pos.getX(i), pz = pos.getZ(i);
+    var h = (Math.sin(x * 0.15 + pz * 0.05) + Math.cos(pz * 0.12)) * amplitude;
+    pos.setY(i, h);
+  }
+  geo.computeVertexNormals();
+  var mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: color, flatShading: true, roughness: 1 }));
+  mesh.position.z = z;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+var fairwayCenterZ = TEE_Z - HOLE_DISTANCE / 2;
+scene.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
+scene.add(makeGround(FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
+
+// Putting green
+var green = new THREE.Mesh(
+  new THREE.CircleGeometry(9, 24),
+  new THREE.MeshStandardMaterial({ color: 0x6fb96a, flatShading: true, roughness: 1 })
+);
+green.rotation.x = -Math.PI / 2;
+green.position.set(0, 0.06, HOLE_Z);
+green.receiveShadow = true;
+scene.add(green);
+
+// Hole + flag
+var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
+hole.position.set(0, 0.02, HOLE_Z);
+scene.add(hole);
+
+var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0xe8e4d8 }));
+pole.position.set(0, 1.1, HOLE_Z);
+pole.castShadow = true;
+scene.add(pole);
+
+var flagShape = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshStandardMaterial({ color: 0xe8543f, side: THREE.DoubleSide, flatShading: true }));
+flagShape.position.set(0.28, 1.95, HOLE_Z);
+flagShape.castShadow = true;
+scene.add(flagShape);
+
+// Tee markers
+[-1.1, 1.1].forEach(function (x) {
+  var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd9b877, flatShading: true }));
+  marker.position.set(x, 0.12, TEE_Z);
+  scene.add(marker);
+});
+
+// Decorative low-poly trees, no collision
+function makeTree(x, z, scale) {
+  var group = new THREE.Group();
+  var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }));
+  trunk.position.y = 0.7;
+  var leaves = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }));
+  leaves.position.y = 2.3;
+  trunk.castShadow = leaves.castShadow = true;
+  group.add(trunk, leaves);
+  group.position.set(x, 0, z);
+  group.scale.setScalar(scale);
+  return group;
+}
+for (var t = 0; t < 10; t++) {
+  var side = t % 2 === 0 ? 1 : -1;
+  var tz = TEE_Z - 8 - (t * (HOLE_DISTANCE / 10));
+  scene.add(makeTree(side * (10 + Math.random() * 6), tz, 0.8 + Math.random() * 0.5));
+}
+
+// ---- Ball ----
+var ballMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.6 })
+);
+ballMesh.castShadow = true;
+scene.add(ballMesh);
+
+// ---- Physics (Cannon-es) ----
+// The visual fairway/rough has gentle vertex displacement for looks, but the physics ground
+// is a single flat plane — matching a heightfield to the visual terrain is more precision than
+// Phase 1 needs; a ball occasionally clipping a small visual bump is an acceptable trade for now.
+var world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+
+var groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+world.addBody(groundBody);
+
+var ballBody = new CANNON.Body({
+  mass: 0.045,
+  shape: new CANNON.Sphere(BALL_RADIUS),
+  linearDamping: 0.32,
+  angularDamping: 0.5
+});
+world.addBody(ballBody);
+
+var contact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
+  friction: 0.45,
+  restitution: 0.35
+});
+world.addContactMaterial(contact);
+
+function resetBall() {
+  ballBody.position.set(0, BALL_RADIUS + 0.02, TEE_Z);
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  ballBody.wakeUp();
+  flightCurveStrength = 0;
+  shotStartPos = null;
+  settled = true;
+  cameraMode = "tee";
+  els.toPin.innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
+}
+
+// ---- Shot application ----
+var DEG2RAD = Math.PI / 180;
+var MIN_SPEED = 20, MAX_SPEED = 50; // m/s, tuned for game feel over a 150m hole, not realism
+var LAUNCH_LOFT_DEG = 13;
+// pathVal/faceVal are accumulated-degree sensor proxies, not calibrated real angles —
+// these scale factors are a rough game-feel guess, tune once real swings are visible.
+var START_ANGLE_SCALE = 0.5;
+var CURVE_SCALE = 0.05;
+var CURVE_ACCEL = 6; // m/s^2 of lateral drift per unit of normalized curve strength, while airborne
+
+var flightCurveStrength = 0;
+var shotStartPos = null;
+var settled = true;
+var cameraMode = "tee"; // tee | flight | result
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function launchShot(shot) {
+  var power = clamp(shot.power || 0, 1, 100);
+  var pathVal = shot.pathVal || 0;
+  var faceVal = shot.faceVal || 0;
+
+  resetBall();
+  settled = false;
+  cameraMode = "flight";
+  shotStartPos = ballBody.position.clone();
+
+  var speed = MIN_SPEED + (power / 100) * (MAX_SPEED - MIN_SPEED);
+  var startAngleDeg = clamp(faceVal * START_ANGLE_SCALE, -32, 32);
+  flightCurveStrength = clamp((faceVal - pathVal) * CURVE_SCALE, -1, 1);
+
+  var angleRad = startAngleDeg * DEG2RAD;
+  var loftRad = LAUNCH_LOFT_DEG * DEG2RAD;
+
+  ballBody.velocity.set(
+    speed * Math.sin(angleRad) * Math.cos(loftRad),
+    speed * Math.sin(loftRad),
+    -speed * Math.cos(angleRad) * Math.cos(loftRad)
+  );
+
+  els.lastShot.innerHTML = "–<span class=\"unit\">m</span>";
+  els.shotLine.textContent = shot.shot ? shot.shot + " · PWR " + Math.round(power) : "";
+}
+
+// ---- WebSocket ----
+var els = {
+  status: document.getElementById("status"),
+  statusText: document.getElementById("statusText"),
+  serverUrl: document.getElementById("serverUrl"),
+  connectBtn: document.getElementById("connectBtn"),
+  toPin: document.getElementById("toPin"),
+  lastShot: document.getElementById("lastShot"),
+  shotLine: document.getElementById("shotLine")
+};
+
+var STORAGE_KEY = "swingLabServerUrl";
+els.serverUrl.value = localStorage.getItem(STORAGE_KEY) || "";
+
+var socket = null;
+function connect() {
+  var url = els.serverUrl.value.trim();
+  if (!url) return;
+  localStorage.setItem(STORAGE_KEY, url);
+  if (socket) socket.close();
+
+  socket = new WebSocket(url);
+  socket.onopen = function () {
+    els.status.classList.add("live");
+    els.statusText.textContent = "Live";
+  };
+  socket.onclose = function () {
+    els.status.classList.remove("live");
+    els.statusText.textContent = "Offline";
+  };
+  socket.onerror = function () {
+    els.status.classList.remove("live");
+    els.statusText.textContent = "Error";
+  };
+  socket.onmessage = function (ev) {
+    try {
+      var msg = JSON.parse(ev.data);
+      if (msg.type === "swing") launchShot(msg);
+    } catch (e) { /* ignore malformed frames */ }
+  };
+}
+els.connectBtn.addEventListener("click", connect);
+document.getElementById("reset").addEventListener("click", resetBall);
+if (els.serverUrl.value) connect();
+
+// ---- Animation loop ----
+var clock = new THREE.Clock();
+resetBall();
+
+function animate() {
+  requestAnimationFrame(animate);
+  var dt = Math.min(clock.getDelta(), 1 / 30);
+
+  if (!settled) {
+    var airborne = ballBody.position.y > BALL_RADIUS + 0.05;
+    if (airborne && flightCurveStrength !== 0) {
+      ballBody.velocity.x += flightCurveStrength * CURVE_ACCEL * dt;
+    }
+  }
+
+  world.step(1 / 60, dt, 5);
+
+  ballMesh.position.copy(ballBody.position);
+  ballMesh.quaternion.copy(ballBody.quaternion);
+
+  if (!settled) {
+    var speed = ballBody.velocity.length();
+    if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
+      settled = true;
+      cameraMode = "result";
+      var dx = ballBody.position.x - shotStartPos.x;
+      var dz = ballBody.position.z - shotStartPos.z;
+      var carried = Math.sqrt(dx * dx + dz * dz);
+      var toPin = Math.hypot(ballBody.position.x - 0, ballBody.position.z - HOLE_Z);
+      els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
+      els.toPin.innerHTML = toPin.toFixed(1) + '<span class="unit">m</span>';
+    }
+  }
+
+  // Camera
+  if (cameraMode === "tee") {
+    camera.position.lerp(new THREE.Vector3(0, 2.6, TEE_Z + 7), 0.08);
+    camera.lookAt(0, 1, TEE_Z - 25);
+  } else {
+    var behind = new THREE.Vector3(0, 3.2, 7);
+    var desired = new THREE.Vector3(ballMesh.position.x + behind.x, behind.y, ballMesh.position.z + behind.z);
+    camera.position.lerp(desired, 0.06);
+    camera.lookAt(ballMesh.position.x, ballMesh.position.y + 0.5, ballMesh.position.z - 6);
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
