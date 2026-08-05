@@ -642,6 +642,8 @@
     font-weight: 600;
   }
   .roster-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--turf); flex-shrink: 0; }
+  .roster-row.offline { color: var(--muted); }
+  .roster-row.offline .dot { background: var(--muted-dim); }
   .roster-empty { font-size: 12.5px; color: var(--muted); padding: 4px 2px; }
   .waiting-hint { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 12px; }
 
@@ -693,7 +695,7 @@
     <div class="roster-list" id="rosterList">
       <div class="roster-empty">Just you so far.</div>
     </div>
-    <div class="waiting-hint">Waiting for the host to start the round&hellip;</div>
+    <div class="waiting-hint" id="waitingHint">Waiting for the host to start the round&hellip;</div>
   </div>
 
   <div class="panel hidden" id="mainPanel">
@@ -838,7 +840,7 @@
     dbgYaw: $("dbgYaw"), dbgRot: $("dbgRot"), dbgHz: $("dbgHz"),
     wsStatus: $("wsStatus"), wsStatusText: $("wsStatusText"), wsUrl: $("wsUrl"), wsConnect: $("wsConnect"),
     joinPanel: $("joinPanel"), joinName: $("joinName"), joinCode: $("joinCode"), joinBtn: $("joinBtn"), joinError: $("joinError"),
-    waitingPanel: $("waitingPanel"), waitingRoomCode: $("waitingRoomCode"), rosterList: $("rosterList"),
+    waitingPanel: $("waitingPanel"), waitingRoomCode: $("waitingRoomCode"), waitingHint: $("waitingHint"), rosterList: $("rosterList"),
     mainPanel: $("mainPanel"), postJoinExtras: $("postJoinExtras"), turnBanner: $("turnBanner")
   };
 
@@ -848,6 +850,14 @@
   var roster = []; // [{id, name}]
   var isMyTurn = false;
   var roundStarted = false;
+  // Remembered only once a join is actually confirmed — lets a dropped connection (screen
+  // lock, phone put away, flaky wifi) silently rejoin under the same name instead of leaving
+  // the player stuck and the laptop waiting forever on a turn that can never arrive. The
+  // server matches rejoins by name and hands back the same player identity, so the laptop's
+  // in-progress state for this player (score, ball position) picks up right where it left off.
+  var lastJoinName = null;
+  var lastJoinCode = null;
+  var reconnectTimer = null;
 
   function showScreen(name) {
     // "join" | "waiting" | "playing" — exactly one of these three panels is visible at a time.
@@ -863,7 +873,8 @@
       return;
     }
     els.rosterList.innerHTML = roster.map(function (p) {
-      return '<div class="roster-row"><span class="dot"></span>' + p.name + (p.id === myPlayerId ? " (you)" : "") + "</div>";
+      var suffix = p.id === myPlayerId ? " (you)" : (p.connected === false ? " (disconnected)" : "");
+      return '<div class="roster-row' + (p.connected === false ? " offline" : "") + '"><span class="dot"></span>' + p.name + suffix + "</div>";
     }).join("");
   }
 
@@ -898,17 +909,28 @@
     socket.onopen = function () {
       els.wsStatus.classList.add("live");
       els.wsStatusText.textContent = "Live";
-      // Nothing sent here yet — a fresh connection isn't in a room yet, so there's no host to
-      // route a "club" (or anything else) to until player_join succeeds below.
       myPlayerId = null;
-      myRoomCode = null;
       roundStarted = false;
       isMyTurn = false;
-      showScreen("join");
+      if (lastJoinName && lastJoinCode) {
+        // Reconnecting, not joining fresh — skip the join screen and rejoin automatically
+        // under the same name.
+        showScreen("waiting");
+        els.waitingHint.textContent = "Reconnecting…";
+        socket.send(JSON.stringify({ type: "player_join", code: lastJoinCode, name: lastJoinName }));
+      } else {
+        myRoomCode = null;
+        showScreen("join");
+      }
     };
     socket.onclose = function () {
       els.wsStatus.classList.remove("live");
       els.wsStatusText.textContent = "Offline";
+      isMyTurn = false;
+      if (lastJoinName && lastJoinCode) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectSocket, 2000);
+      }
     };
     socket.onerror = function () {
       els.wsStatus.classList.remove("live");
@@ -921,14 +943,23 @@
       if (msg.type === "joined") {
         myPlayerId = msg.playerId;
         myRoomCode = msg.code;
+        lastJoinName = msg.name;
+        lastJoinCode = msg.code;
         els.waitingRoomCode.textContent = msg.code;
+        els.waitingHint.textContent = roundStarted ? "Reconnected — hang tight." : "Waiting for the host to start the round…";
         els.joinError.classList.remove("show");
-        showScreen("waiting");
+        if (!roundStarted) showScreen("waiting");
         var club = CLUBS[selectedClubIndex];
         socket.send(JSON.stringify({ type: "club", clubName: club.name, loftDeg: club.loft }));
       } else if (msg.type === "join_error") {
+        // Only reason the server sends this is "room not found" — no point quietly retrying a
+        // room that's actually gone, so stop auto-reconnecting and let them decide (a new code
+        // from the host, most likely).
+        lastJoinName = null;
+        lastJoinCode = null;
         els.joinError.textContent = msg.reason || "Couldn't join that room.";
         els.joinError.classList.add("show");
+        showScreen("join");
       } else if (msg.type === "roster") {
         roster = msg.players || [];
         renderRoster();
@@ -944,6 +975,8 @@
       } else if (msg.type === "room_closed") {
         myPlayerId = null;
         myRoomCode = null;
+        lastJoinName = null;
+        lastJoinCode = null;
         roundStarted = false;
         isMyTurn = false;
         els.joinError.textContent = "The host closed the room. Join again to reconnect.";

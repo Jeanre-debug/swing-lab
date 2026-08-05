@@ -11,7 +11,8 @@ const wss = new WebSocketServer({ port: PORT });
 // messages that matter to players (turn order, round start, room closing) broadcast to every
 // player in the room instead.
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to misread out loud
-const rooms = new Map(); // code -> { host: ws|null, players: Map(playerId -> {ws, name}), nextPlayerId }
+// code -> { host, players: Map(playerId -> {ws, name, connected}), nextPlayerId, lastRoundStarted, lastTurnPlayerId }
+const rooms = new Map();
 
 function makeRoomCode() {
   var code;
@@ -27,7 +28,9 @@ function send(ws, msg) {
 }
 
 function roster(room) {
-  return Array.from(room.players.entries()).map(function ([id, p]) { return { id: id, name: p.name }; });
+  return Array.from(room.players.entries()).map(function ([id, p]) {
+    return { id: id, name: p.name, connected: p.connected };
+  });
 }
 
 function broadcastRoster(room) {
@@ -57,7 +60,7 @@ wss.on("connection", function (ws) {
 
     if (msg.type === "host_create") {
       var code = makeRoomCode();
-      rooms.set(code, { host: ws, players: new Map(), nextPlayerId: 1 });
+      rooms.set(code, { host: ws, players: new Map(), nextPlayerId: 1, lastRoundStarted: false, lastTurnPlayerId: null });
       ws.role = "host";
       ws.roomCode = code;
       send(ws, { type: "room_created", code: code });
@@ -71,13 +74,35 @@ wss.on("connection", function (ws) {
         send(ws, { type: "join_error", reason: "Room not found" });
         return;
       }
-      var playerId = "p" + room.nextPlayerId++;
       var name = String(msg.name || "Player").slice(0, 20);
-      room.players.set(playerId, { ws: ws, name: name });
+
+      // Rejoin: someone reconnecting (screen lock, dropped wifi, phone put away) under the
+      // same name reuses their existing player id rather than getting a fresh one — the
+      // laptop's already-in-progress state for that player (score, ball position, whose turn
+      // it is) is keyed off this id, so a new one would orphan all of it.
+      var nameKey = name.trim().toLowerCase();
+      var playerId = null;
+      room.players.forEach(function (p, id) {
+        if (!playerId && p.name.trim().toLowerCase() === nameKey) playerId = id;
+      });
+
+      if (playerId) {
+        var existing = room.players.get(playerId);
+        existing.ws = ws;
+        existing.connected = true;
+      } else {
+        playerId = "p" + room.nextPlayerId++;
+        room.players.set(playerId, { ws: ws, name: name, connected: true });
+      }
       ws.role = "player";
       ws.roomCode = roomCode;
       ws.playerId = playerId;
       send(ws, { type: "joined", code: roomCode, playerId: playerId, name: name });
+      // A (re)joining player has no way to otherwise learn a round is already under way, or
+      // whose turn it currently is — without this a reconnecting player could sit on the
+      // waiting screen indefinitely even if the rotation's already come back around to them.
+      if (room.lastRoundStarted) send(ws, { type: "start_round" });
+      if (room.lastTurnPlayerId) send(ws, { type: "turn", playerId: room.lastTurnPlayerId });
       broadcastRoster(room);
       return;
     }
@@ -96,8 +121,14 @@ wss.on("connection", function (ws) {
       send(myRoom.host, msg);
     } else if (ws.role === "host") {
       // start_round / turn — broadcast to every player in the room; the host already knows its
-      // own state, it doesn't need these echoed back.
-      if (msg.type === "start_round" || msg.type === "turn") {
+      // own state, it doesn't need these echoed back. Also remembered per-room so a player who
+      // (re)joins mid-round can be caught up immediately above, instead of only finding out
+      // next time the turn naturally changes.
+      if (msg.type === "start_round") {
+        myRoom.lastRoundStarted = true;
+        broadcastToPlayers(myRoom, msg);
+      } else if (msg.type === "turn") {
+        myRoom.lastTurnPlayerId = msg.playerId;
         broadcastToPlayers(myRoom, msg);
       }
     }
@@ -112,7 +143,14 @@ wss.on("connection", function (ws) {
       }
     } else if (ws.role === "player" && ws.roomCode) {
       var joinedRoom = rooms.get(ws.roomCode);
-      if (joinedRoom && joinedRoom.players.delete(ws.playerId)) {
+      var entry = joinedRoom ? joinedRoom.players.get(ws.playerId) : null;
+      // Marked disconnected rather than removed, so the rest of the round can keep going
+      // without this player while leaving the door open for them to rejoin later and pick up
+      // right where they left off. Only if this socket is still the one on record for them —
+      // a rejoin may have already replaced it with a new connection, and that new connection's
+      // own close handler (whenever it eventually fires) shouldn't get to undo the rejoin.
+      if (entry && entry.ws === ws) {
+        entry.connected = false;
         broadcastRoster(joinedRoom);
       }
     }

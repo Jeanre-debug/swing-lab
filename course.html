@@ -228,6 +228,8 @@
     border-radius: 8px; padding: 9px 12px; font-size: 14px; font-weight: 600;
   }
   .lobby-roster-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--turf); flex-shrink: 0; }
+  .lobby-roster-row.offline { color: var(--muted); }
+  .lobby-roster-row.offline .dot { background: var(--muted-dim, var(--muted)); }
   .lobby-empty { font-size: 12.5px; color: var(--muted); text-align: center; padding: 8px 0; }
 
   .difficulty-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0 4px; }
@@ -261,6 +263,7 @@
     border-radius: 6px;
   }
   .players-panel .player-row.current { color: var(--paper); background: color-mix(in srgb, var(--turf) 16%, transparent); padding-left: 8px; padding-right: 8px; }
+  .players-panel .player-row.offline { color: var(--muted); opacity: 0.7; }
   .players-panel .player-row .player-total { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .players-panel .player-row .player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -790,9 +793,12 @@ function renderLobbyRoster() {
     list.innerHTML = '<div class="lobby-empty">Waiting for players to join&hellip;</div>';
   } else {
     list.innerHTML = roster.map(function (p) {
-      return '<div class="lobby-roster-row"><span class="dot"></span>' + p.name + "</div>";
+      return '<div class="lobby-roster-row' + (p.connected === false ? " offline" : "") + '"><span class="dot"></span>' + p.name +
+        (p.connected === false ? " (disconnected)" : "") + "</div>";
     }).join("");
   }
+  // A round doesn't need every joined player to be currently connected to start (someone can
+  // rejoin later) — it just needs at least one player to have joined at some point.
   document.getElementById("startRoundBtn").disabled = roster.length === 0;
 }
 
@@ -808,8 +814,9 @@ function updatePlayersPanel() {
   if (!roundStarted || players.length < 2) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");
   document.getElementById("playersList").innerHTML = players.map(function (p, i) {
-    return '<div class="player-row' + (i === currentPlayerIdx ? " current" : "") + '">' +
-      '<span class="player-name">' + p.name + '</span><span class="player-total">' + playerTotal(p) + "</span></div>";
+    var cls = "player-row" + (i === currentPlayerIdx ? " current" : "") + (p.connected === false ? " offline" : "");
+    var name = p.name + (p.connected === false ? " (disconnected)" : "");
+    return '<div class="' + cls + '"><span class="player-name">' + name + '</span><span class="player-total">' + playerTotal(p) + "</span></div>";
   }).join("");
 }
 
@@ -841,9 +848,33 @@ function saveCurrentPlayerBallState() {
 function nextPlayerIndex() {
   for (var step = 1; step <= players.length; step++) {
     var idx = (currentPlayerIdx + step) % players.length;
-    if (!players[idx].finishedHole) return idx;
+    // A disconnected player can't take a shot the rotation is waiting on — skip them so the
+    // round keeps moving for whoever's left; they slot back in on their next natural turn if
+    // they rejoin (same reasoning as onHoleComplete's rest-of-round-continues use of this).
+    if (!players[idx].finishedHole && players[idx].connected) return idx;
   }
-  return -1; // everyone has holed out this hole
+  return -1; // everyone left has either holed out or disconnected
+}
+
+var advancingDueToDisconnect = false;
+// Keeps players[]'s connection flags in sync with the room roster as people drop and rejoin,
+// and — critically — un-sticks the round if the player the rotation is CURRENTLY waiting on
+// is the one who just disconnected, rather than leaving the host sitting there forever for a
+// swing that can never arrive.
+function syncPlayerConnectionStatus() {
+  roster.forEach(function (rp) {
+    for (var i = 0; i < players.length; i++) {
+      if (players[i].id === rp.id) players[i].connected = rp.connected;
+    }
+  });
+  updatePlayersPanel();
+
+  var current = currentPlayer();
+  if (current && !current.connected && settled && !advancingDueToDisconnect) {
+    advancingDueToDisconnect = true;
+    els.shotLine.textContent = current.name + " disconnected — skipping their turn";
+    setTimeout(function () { advancingDueToDisconnect = false; advanceTurn(); }, 1500);
+  }
 }
 
 function recomputeAimFromBallPos() {
@@ -1659,6 +1690,7 @@ function connect() {
       if (msg.type === "roster") {
         roster = msg.players || [];
         renderLobbyRoster();
+        if (roundStarted) syncPlayerConnectionStatus();
         return;
       }
       if (msg.type === "club") {
@@ -1722,9 +1754,12 @@ document.getElementById("builderLink").addEventListener("click", function (e) {
 document.getElementById("startRoundBtn").addEventListener("click", function () {
   if (!roster.length) return;
   players = roster.map(function (p) {
-    return { id: p.id, name: p.name, strokes: 0, ballPos: null, finishedHole: false, holeScores: [], lastClubName: rosterClubs[p.id] || null };
+    return { id: p.id, name: p.name, strokes: 0, ballPos: null, finishedHole: false, holeScores: [], lastClubName: rosterClubs[p.id] || null, connected: p.connected !== false };
   });
+  // Start on the first actually-connected player — someone who joined the lobby and then
+  // dropped before Start Round shouldn't leave the round waiting on them from shot one.
   currentPlayerIdx = 0;
+  for (var si = 0; si < players.length; si++) { if (players[si].connected) { currentPlayerIdx = si; break; } }
   roundStarted = true;
   document.getElementById("lobbyOverlay").classList.remove("show");
   if (socket && socket.readyState === WebSocket.OPEN) {
