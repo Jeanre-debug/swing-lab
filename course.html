@@ -687,11 +687,15 @@ function launchShot(shot) {
   // shotRight is the golfer's right after aim (perpendicular to the aimed direction). On the
   // phone, positive faceVal means CLOSED, which for a right-handed golfer starts/curves the
   // ball LEFT — so both terms need the sign flipped to land in the correct direction here.
-  var startAngleDeg = clamp(-faceVal * START_ANGLE_SCALE, -32, 32);
+  // For a left-handed golfer the same closed face curves the ball the other way (toward THEIR
+  // right), so handSign flips it again — mirrors the righty logic, not itself verified on a
+  // real left-handed swing.
+  var handSign = shot.hand === "L" ? -1 : 1;
+  var startAngleDeg = clamp(-handSign * faceVal * START_ANGLE_SCALE, -32, 32);
   // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
   // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
   var curveMultiplier = clamp(12 / loftDeg, 0.2, 1.3);
-  flightCurveStrength = clamp(-(faceVal - pathVal) * CURVE_SCALE * curveMultiplier, -1, 1);
+  flightCurveStrength = clamp(-handSign * (faceVal - pathVal) * CURVE_SCALE * curveMultiplier, -1, 1);
 
   var angleRad = startAngleDeg * DEG2RAD;
   var loftRad = loftDeg * DEG2RAD;

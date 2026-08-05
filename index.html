@@ -201,8 +201,27 @@
     color: var(--paper);
     transition: color 0.2s ease;
   }
-  .readout .value.impact { color: var(--flag); }
+  @keyframes powerPop { 0% { transform: scale(1); } 30% { transform: scale(1.1); } 100% { transform: scale(1); } }
+  .readout .value.impact { color: var(--flag); animation: powerPop 0.35s ease-out; }
   .readout .unit { font-size: 22px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+  @media (prefers-reduced-motion: reduce) { .readout .value.impact { animation: none; } }
+
+  .swing-meter { margin-top: 12px; }
+  .swing-meter .meter-label {
+    display: flex; justify-content: space-between;
+    font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 5px;
+  }
+  .swing-meter-track { height: 7px; border-radius: 999px; background: var(--panel-raised); border: 1px solid var(--line); overflow: hidden; }
+  .swing-meter-fill { height: 100%; width: 0%; border-radius: 999px; background: var(--turf); transition: width 0.04s linear, background 0.15s ease; }
+  .swing-meter-fill.hi { background: var(--flag); }
+
+  @keyframes shotFlash {
+    0% { box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--flag) 55%, transparent); }
+    100% { box-shadow: inset 0 0 0 40px color-mix(in srgb, var(--flag) 0%, transparent); }
+  }
+  .panel.shot-flash { animation: shotFlash 0.55s ease-out; }
+  @media (prefers-reduced-motion: reduce) { .panel.shot-flash { animation: none; } }
 
   .shot-badge {
     display: inline-block;
@@ -329,8 +348,8 @@
     background: var(--panel); border-radius: 50%; width: 22px; height: 22px;
     align-items: center; justify-content: center;
   }
-  .club-pill.practice-on { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 16%, var(--panel-raised)); }
-  .club-pill.practice-on .club-name { color: var(--sand); }
+  .club-pill.toggle-on { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 16%, var(--panel-raised)); }
+  .club-pill.toggle-on .club-name { color: var(--sand); }
   .club-pill:focus-visible { outline: 2px solid var(--sand); }
 
   .picker-overlay {
@@ -525,7 +544,7 @@
     <button id="wsConnect">Connect</button>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="mainPanel">
     <div class="status-strip">
       <div class="phase" id="phase">IDLE</div>
       <div class="dot-wrap">
@@ -537,6 +556,11 @@
       <div class="label">Swing Power</div>
       <div class="value" id="power">&#8211;&#8211;<span class="unit">/100</span></div>
       <div class="shot-badge" id="shotBadge">&#8211;&#8211;</div>
+    </div>
+
+    <div class="swing-meter">
+      <div class="meter-label"><span>Live Swing Meter</span><span id="meterNum">0</span></div>
+      <div class="swing-meter-track"><div class="swing-meter-fill" id="meterFill"></div></div>
     </div>
 
     <div class="metrics-row">
@@ -577,6 +601,13 @@
       <span class="label">Mode</span>
       <button class="club-pill" id="practiceToggle">
         <span class="club-name" id="practiceToggleLabel">Play</span>
+      </button>
+    </div>
+
+    <div class="club-row">
+      <span class="label">Hand</span>
+      <button class="club-pill" id="handToggle">
+        <span class="club-name" id="handToggleLabel">Right</span>
       </button>
     </div>
 
@@ -676,15 +707,38 @@
   practiceEls.toggle.addEventListener("click", function () {
     practiceMode = !practiceMode;
     practiceEls.label.textContent = practiceMode ? "Practice" : "Play";
-    practiceEls.toggle.classList.toggle("practice-on", practiceMode);
+    practiceEls.toggle.classList.toggle("toggle-on", practiceMode);
   });
 
-  // Streams a live power readout to the laptop while the swing is in progress, so its power
-  // bar can fill up in real time instead of only showing the final number after impact.
+  // Mirrors the righty PATH_SIGN/FACE_SIGN convention above — a left-handed grip is the
+  // physical mirror of the right-handed one, so the sign a lefty's swing produces should be
+  // the mirror too. That's a reasoned guess extrapolated from the (empirically-verified)
+  // righty case, not itself tested on a real left-handed swing — flip HAND_MIRROR's sign here
+  // if a lefty's face/path readings come out backwards.
+  var isLefty = localStorage.getItem("swingLabLefty") === "1";
+  var handEls = { toggle: $("handToggle"), label: $("handToggleLabel") };
+  function applyHandUI() {
+    handEls.label.textContent = isLefty ? "Left" : "Right";
+    handEls.toggle.classList.toggle("toggle-on", isLefty);
+  }
+  applyHandUI();
+  handEls.toggle.addEventListener("click", function () {
+    isLefty = !isLefty;
+    localStorage.setItem("swingLabLefty", isLefty ? "1" : "0");
+    applyHandUI();
+  });
+
+  // Streams a live power readout to the laptop (its power bar) and updates the on-phone swing
+  // meter, so both fill up in real time instead of only showing the final number after impact.
+  var meterFill = $("meterFill"), meterNum = $("meterNum");
   setInterval(function () {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     var live = (state === "swinging" && swingPeak) ? clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 0, 100) : 0;
-    socket.send(JSON.stringify({ type: "power", power: live }));
+    meterFill.style.width = live + "%";
+    meterFill.classList.toggle("hi", live > 85);
+    meterNum.textContent = live;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "power", power: live }));
+    }
   }, 60);
 
   // Real loft angles. speedMult is what keeps distance ordering realistic: with plain
@@ -941,14 +995,17 @@
     }
 
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
-    var pathVal = PATH_SIGN * pathTotal;
-    var faceVal = FACE_SIGN * faceTotal;
+    var handMirror = isLefty ? -1 : 1;
+    var pathVal = PATH_SIGN * handMirror * pathTotal;
+    var faceVal = FACE_SIGN * handMirror * faceTotal;
     var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "STRAIGHT";
     var faceLabel = faceVal > FACE_EPS ? "CLOSED" : faceVal < -FACE_EPS ? "OPEN" : "SQUARE";
     var shotName = classifyShot(pathVal, faceVal);
 
     els.power.innerHTML = power + '<span class="unit">/100</span>';
     els.power.classList.add("impact");
+    $("mainPanel").classList.add("shot-flash");
+    setTimeout(function () { $("mainPanel").classList.remove("shot-flash"); }, 600);
     els.tempo.textContent = tempoRatio ? tempoRatio.toFixed(1) + ":1" : "n/a";
     els.path.textContent = pathLabel;
     els.face.textContent = faceLabel;
@@ -969,6 +1026,7 @@
     sendSwing({
       power: power, pathVal: pathVal, faceVal: faceVal, tempo: tempoRatio, shot: shotName,
       club: club.id, clubName: club.name, loftDeg: club.loft, speedMult: club.speedMult,
+      hand: isLefty ? "L" : "R",
       type: practiceMode ? "practice" : "swing"
     });
 
