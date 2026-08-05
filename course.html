@@ -544,6 +544,8 @@ function loadHole(idx) {
   document.getElementById("holeNum").textContent = (idx + 1) + " / " + roundHoles.length;
 
   resetBall(); // also zeroes strokesThisHole
+  aimOffsetDeg = 0; // a new hole starts aimed straight at the pin, not carrying over the last hole's aim
+  document.getElementById("aimVal").textContent = "0°";
   camera.position.set(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
   camera.lookAt(TEE_POS.x + FWD.x * 25, 1, TEE_POS.z + FWD.z * 25);
 }
@@ -761,6 +763,7 @@ var shotStartPos = null;
 var settled = true;
 var cameraMode = "tee"; // tee | flight | result
 var shotRight = { x: 1, z: 0 }; // RIGHT used by the shot in flight, captured at launch (see aim below)
+var shotFwd = { x: 0, z: -1 }; // FWD used by the shot in flight, captured at launch alongside shotRight
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -859,6 +862,7 @@ function launchShot(shot) {
 
   var aim = rotateBasis(aimOffsetDeg);
   shotRight = aim.right;
+  shotFwd = aim.fwd;
 
   var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult;
   // shotRight is the golfer's right after aim (perpendicular to the aimed direction). On the
@@ -1031,15 +1035,22 @@ function animate() {
 
   // Camera — "tee" here really means "ball at rest, aiming the next shot", which applies
   // after every shot, not just the first — so this frames from the ball's current position,
-  // not the hole's actual tee (which subsequent shots aren't played from).
+  // not the hole's actual tee (which subsequent shots aren't played from). It also has to face
+  // the AIMED direction, not the hole's raw bearing — otherwise the camera stares at the pin
+  // while the aim dots point off to one side, and the ball (correctly) launches toward the
+  // dots, which reads as "the ball didn't go where I was looking." Matching what's on screen
+  // to what the shot actually does matters more here than a perfectly pin-centered view.
   if (cameraMode === "tee") {
-    var teeCamPos = new THREE.Vector3(ballMesh.position.x - FWD.x * 7, ballMesh.position.y + 2.6, ballMesh.position.z - FWD.z * 7);
+    var aimCam = rotateBasis(aimOffsetDeg).fwd;
+    var teeCamPos = new THREE.Vector3(ballMesh.position.x - aimCam.x * 7, ballMesh.position.y + 2.6, ballMesh.position.z - aimCam.z * 7);
     camera.position.lerp(teeCamPos, 0.08);
-    camera.lookAt(ballMesh.position.x + FWD.x * 25, ballMesh.position.y + 1, ballMesh.position.z + FWD.z * 25);
+    camera.lookAt(ballMesh.position.x + aimCam.x * 25, ballMesh.position.y + 1, ballMesh.position.z + aimCam.z * 25);
   } else {
-    var desired = new THREE.Vector3(ballMesh.position.x - FWD.x * 7, ballMesh.position.y + 3.2, ballMesh.position.z - FWD.z * 7);
+    // In flight, follow the direction this shot actually launched in (captured at launch as
+    // shotFwd), not the live aim — aim only affects the NEXT shot once this one has landed.
+    var desired = new THREE.Vector3(ballMesh.position.x - shotFwd.x * 7, ballMesh.position.y + 3.2, ballMesh.position.z - shotFwd.z * 7);
     camera.position.lerp(desired, 0.06);
-    camera.lookAt(ballMesh.position.x + FWD.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + FWD.z * 6);
+    camera.lookAt(ballMesh.position.x + shotFwd.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + shotFwd.z * 6);
   }
 
   drawMinimapFrame();
