@@ -99,7 +99,7 @@
   .minimap-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px 8px; }
   .minimap-length { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--sand); }
   .minimap-length .unit { font-size: 10px; color: var(--muted); margin-left: 2px; }
-  canvas#minimap { display: block; border-radius: 8px; background: #2f5233; }
+  canvas#minimap { display: block; border-radius: 8px; background: #4f9d5c; }
   .strokes-row {
     display: flex; justify-content: space-between; align-items: baseline;
     padding: 8px 2px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em;
@@ -264,6 +264,15 @@
   </div>
 </div>
 
+<div class="overlay" id="waterPenaltyModal">
+  <div class="modal panel">
+    <div class="eyebrow">Splash!</div>
+    <div class="summary-lines">Your ball found the water. Choose how to continue — either way it's +1 penalty stroke.</div>
+    <button class="btn primary" id="dropEntryBtn">Drop at Entry Point</button>
+    <button class="btn" id="reteeBtn">Re-tee</button>
+  </div>
+</div>
+
 <div class="bottom-stack">
   <div class="power-wrap panel">
     <div class="power-label">
@@ -323,12 +332,16 @@ var renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+// Filmic tone mapping + a touch of exposure — the flat linear default was crushing highlights
+// and reading dark/cold even with bright material colors underneath.
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
 viewport.appendChild(renderer.domElement);
 
 var scene = new THREE.Scene();
-var skyColor = 0x7ec8e3;
+var skyColor = 0x8fdcf2;
 scene.background = new THREE.Color(skyColor);
-scene.fog = new THREE.Fog(skyColor, 60, 220);
+scene.fog = new THREE.Fog(skyColor, 70, 240);
 
 var camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 800);
 
@@ -339,8 +352,8 @@ window.addEventListener("resize", function () {
 });
 
 // ---- Lighting ----
-scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x2f5233, 0.9));
-var sun = new THREE.DirectionalLight(0xfff2d8, 1.1);
+scene.add(new THREE.HemisphereLight(0xd6f0ff, 0x5a8a4a, 1.05));
+var sun = new THREE.DirectionalLight(0xfff2d0, 1.35);
 sun.position.set(40, 60, 20);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -416,7 +429,7 @@ function addHoleAndFlag(pos) {
 
 function addTeeMarkers(pos, right) {
   [-1.1, 1.1].forEach(function (side) {
-    var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd9b877, flatShading: true }));
+    var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xeecb8c, flatShading: true }));
     marker.position.set(pos.x + right.x * side, 0.12, pos.z + right.z * side);
     holeGroup.add(marker);
   });
@@ -446,12 +459,12 @@ function buildDefaultHole() {
   }
 
   var fairwayCenterZ = (TEE_POS.z + HOLE_POS.z) / 2;
-  holeGroup.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
-  holeGroup.add(makeGround(DEFAULT_FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
+  holeGroup.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x4f9d5c, fairwayCenterZ)); // rough
+  holeGroup.add(makeGround(DEFAULT_FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x74c47a, fairwayCenterZ)); // fairway
 
   var green = new THREE.Mesh(
     new THREE.CircleGeometry(9, 24),
-    new THREE.MeshStandardMaterial({ color: 0x6fb96a, flatShading: true, roughness: 1 })
+    new THREE.MeshStandardMaterial({ color: 0x8ed685, flatShading: true, roughness: 1 })
   );
   green.rotation.x = -Math.PI / 2;
   green.position.set(HOLE_POS.x, 0.06, HOLE_POS.z);
@@ -464,9 +477,9 @@ function buildDefaultHole() {
   // Decorative low-poly trees, no collision
   function makeTree(x, z, scale) {
     var group = new THREE.Group();
-    var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }));
+    var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x8a6142, flatShading: true }));
     trunk.position.y = 0.7;
-    var leaves = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }));
+    var leaves = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), new THREE.MeshStandardMaterial({ color: 0x3d8a4d, flatShading: true }));
     leaves.position.y = 2.3;
     trunk.castShadow = leaves.castShadow = true;
     group.add(trunk, leaves);
@@ -483,13 +496,13 @@ function buildDefaultHole() {
 
 // ---- Hole builder B: a course.tiles grid saved from builder.html ----
 var TILE_STYLE = {
-  rough: { color: 0x3c7a4a, y: -0.02 },
-  fairway: { color: 0x5a9c5f, y: 0 },
-  green: { color: 0x6fb96a, y: 0.03 },
-  bunker: { color: 0xd9b877, y: -0.06 },
-  water: { color: 0x3a7fc1, y: -0.08 },
-  tree: { color: 0x3c7a4a, y: -0.02 }, // base under a tree tile is grass; the tree itself sits on top
-  ob: { color: 0x8f8578, y: -0.02 } // dead/unmaintained ground — matches the builder's OB swatch
+  rough: { color: 0x4f9d5c, y: -0.02 },
+  fairway: { color: 0x74c47a, y: 0 },
+  green: { color: 0x8ed685, y: 0.03 },
+  bunker: { color: 0xeecb8c, y: -0.06 },
+  water: { color: 0x2fb8cf, y: -0.08 },
+  tree: { color: 0x4f9d5c, y: -0.02 }, // base under a tree tile is grass; the tree itself sits on top
+  ob: { color: 0xa89c8c, y: -0.02 } // dead/unmaintained ground — matches the builder's OB swatch
 };
 
 function buildLayerMesh(cells, material, yOffset, tileSize) {
@@ -512,8 +525,8 @@ function buildLayerMesh(cells, material, yOffset, tileSize) {
 // ShaderMaterial that would have to reimplement all of that by hand.
 function createWaterMaterial() {
   var material = new THREE.MeshStandardMaterial({
-    color: 0x2f7fc0, flatShading: true, roughness: 0.3, metalness: 0.1,
-    transparent: true, opacity: 0.92
+    color: 0x1ec8d8, flatShading: true, roughness: 0.18, metalness: 0.25,
+    transparent: true, opacity: 0.94
   });
   material.onBeforeCompile = function (shader) {
     shader.uniforms.uTime = { value: 0 };
@@ -527,17 +540,25 @@ function createWaterMaterial() {
         "  vec3 waterWorldPos = position;",
         "#endif",
         "vWaterWorldPos = waterWorldPos;",
-        "transformed.y += sin(waterWorldPos.x * 0.35 + waterWorldPos.z * 0.28 + uTime * 1.6) * 0.05;"
+        "transformed.y += sin(waterWorldPos.x * 0.4 + waterWorldPos.z * 0.32 + uTime * 1.7) * 0.06",
+        "  + sin(waterWorldPos.x * 0.9 - waterWorldPos.z * 0.6 + uTime * 2.6) * 0.025;"
       ].join("\n"));
+    // Fully replaces diffuseColor rather than tinting the base material color — a moving
+    // deep-to-shallow gradient plus a tight, bright sparkle term for sun-glint, which reads as
+    // "water" far more than a flat color modulation did.
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", "#include <common>\nuniform float uTime;\nvarying vec3 vWaterWorldPos;")
       .replace("#include <color_fragment>", [
         "#include <color_fragment>",
         "{",
-        "  float ripple = sin(vWaterWorldPos.x * 0.6 + uTime * 1.3) * sin(vWaterWorldPos.z * 0.5 - uTime * 1.1);",
-        "  float glint = smoothstep(0.82, 1.0, ripple);",
-        "  diffuseColor.rgb += glint * 0.4;",
-        "  diffuseColor.rgb *= 0.9 + 0.12 * sin(vWaterWorldPos.x * 0.3 - vWaterWorldPos.z * 0.25 + uTime * 0.8);",
+        "  float waveA = sin(vWaterWorldPos.x * 0.55 + uTime * 1.4);",
+        "  float waveB = sin(vWaterWorldPos.z * 0.5 - uTime * 1.15);",
+        "  float bands = waveA * waveB;",
+        "  vec3 deepBlue = vec3(0.06, 0.36, 0.52);",
+        "  vec3 shallowCyan = vec3(0.38, 0.88, 0.88);",
+        "  diffuseColor.rgb = mix(deepBlue, shallowCyan, smoothstep(-0.3, 0.7, bands));",
+        "  float sparkle = pow(max(0.0, sin(vWaterWorldPos.x * 3.1 + uTime * 3.0) * sin(vWaterWorldPos.z * 2.7 - uTime * 2.4)), 6.0);",
+        "  diffuseColor.rgb += sparkle * vec3(1.0, 1.0, 0.95);",
         "}"
       ].join("\n"));
     material.userData.shader = shader;
@@ -594,12 +615,12 @@ function buildTileHole(course) {
   if (treeCells.length) {
     var trunkMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6),
-      new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }),
+      new THREE.MeshStandardMaterial({ color: 0x8a6142, flatShading: true }),
       treeCells.length
     );
     var leafMesh = new THREE.InstancedMesh(
       new THREE.ConeGeometry(1.1, 2.4, 7),
-      new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }),
+      new THREE.MeshStandardMaterial({ color: 0x3d8a4d, flatShading: true }),
       treeCells.length
     );
     trunkMesh.castShadow = leafMesh.castShadow = true;
@@ -756,6 +777,10 @@ function resetBall() {
   shotStartPos = null;
   settled = true;
   cameraMode = "tee";
+  // A manual reset mid-water-choice shouldn't leave the ball invisible or the modal stuck open.
+  waterPenaltyPending = null;
+  ballMesh.visible = true;
+  els.waterModal.classList.remove("show");
   // Moving the ball back to the tee — whether starting a fresh hole or hitting the manual
   // reset button mid-hole — is a restart of this hole either way, so the stroke count resets.
   strokesThisHole = 0;
@@ -775,7 +800,7 @@ var mmBg = document.createElement("canvas");
 mmBg.width = MM_W; mmBg.height = MM_H;
 var mmBgCtx = mmBg.getContext("2d");
 var mmScale = 1, mmOffX = 0, mmOffZ = 0;
-var MM_TYPE_COLOR = { rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a", bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e", ob: "#8f8578" };
+var MM_TYPE_COLOR = { rough: "#4f9d5c", fairway: "#74c47a", green: "#8ed685", bunker: "#eecb8c", water: "#2fb8cf", tree: "#3d8a4d", ob: "#a89c8c" };
 
 function worldToMM(x, z) {
   return { x: mmOffX + x * mmScale, y: mmOffZ + z * mmScale };
@@ -794,7 +819,7 @@ function buildMinimapBackground(course) {
   mmOffX = MM_W / 2 - (minX + maxX) / 2 * mmScale;
   mmOffZ = MM_H / 2 - (minZ + maxZ) / 2 * mmScale;
 
-  mmBgCtx.fillStyle = "#2f5233";
+  mmBgCtx.fillStyle = "#4f9d5c";
   mmBgCtx.fillRect(0, 0, MM_W, MM_H);
 
   if (course) {
@@ -813,14 +838,14 @@ function buildMinimapBackground(course) {
     }
   } else {
     var teePt = worldToMM(TEE_POS.x, TEE_POS.z), holePt = worldToMM(HOLE_POS.x, HOLE_POS.z);
-    mmBgCtx.strokeStyle = "#5a9c5f";
+    mmBgCtx.strokeStyle = "#74c47a";
     mmBgCtx.lineWidth = Math.max(6, DEFAULT_FAIRWAY_WIDTH * mmScale);
     mmBgCtx.lineCap = "round";
     mmBgCtx.beginPath(); mmBgCtx.moveTo(teePt.x, teePt.y); mmBgCtx.lineTo(holePt.x, holePt.y); mmBgCtx.stroke();
   }
 
   var teeDot = worldToMM(TEE_POS.x, TEE_POS.z);
-  mmBgCtx.fillStyle = "#d9b877";
+  mmBgCtx.fillStyle = "#eecb8c";
   mmBgCtx.beginPath(); mmBgCtx.arc(teeDot.x, teeDot.y, 3, 0, Math.PI * 2); mmBgCtx.fill();
 
   var holeDot = worldToMM(HOLE_POS.x, HOLE_POS.z);
@@ -1029,6 +1054,78 @@ function updateWaterSplash(dt) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// ---- Water hazard: ball vanishes the instant it touches water, then waits for the player to
+// choose how to continue rather than auto-repositioning like the OB/rough penalties do ----
+var waterPenaltyPending = null; // { entryPos: {x,y,z}, isTeeShot } while the choice modal is open
+
+function handleWaterEntry() {
+  settled = true;
+  cameraMode = "result";
+  var entryPos = { x: ballBody.position.x, y: ballBody.position.y, z: ballBody.position.z };
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  triggerWaterSplash(entryPos.x, entryPos.y, entryPos.z);
+  ballMesh.visible = false;
+  // strokesThisHole was already incremented by launchShot for the shot that just went in, so
+  // checking it here (before the penalty stroke below) tells us whether that was the tee shot.
+  waterPenaltyPending = { entryPos: entryPos, isTeeShot: strokesThisHole === 1 };
+  els.reteeBtn.style.display = waterPenaltyPending.isTeeShot ? "" : "none";
+  els.waterModal.classList.add("show");
+}
+
+// Real lateral-hazard relief drops near where the ball crossed the hazard margin, roughly on
+// the line back to where the shot was played from — approximated here by walking back from the
+// entry point toward shotStartPos until off water/OB, falling back to shotStartPos itself
+// (always dry, since the previous shot was played from there) if nothing dry is found sooner.
+function nearestDryLandingSpot(entryPos) {
+  var fromX = shotStartPos.x, fromZ = shotStartPos.z;
+  var dx = fromX - entryPos.x, dz = fromZ - entryPos.z;
+  var dist = Math.hypot(dx, dz) || 1;
+  var stepX = dx / dist, stepZ = dz / dist;
+  for (var d = 0.5; d <= dist; d += 0.5) {
+    var px = entryPos.x + stepX * d, pz = entryPos.z + stepZ * d;
+    var t = tileTypeAt(px, pz);
+    if (t !== "water" && t !== "ob") return { x: px, z: pz };
+  }
+  return { x: fromX, z: fromZ };
+}
+
+function resolveWaterPenalty(choice) {
+  var pending = waterPenaltyPending;
+  if (!pending) return;
+  waterPenaltyPending = null;
+  els.waterModal.classList.remove("show");
+
+  strokesThisHole++;
+  els.strokes.textContent = strokesThisHole;
+
+  var dropPos = choice === "retee" ? { x: TEE_POS.x, z: TEE_POS.z } : nearestDryLandingSpot(pending.entryPos);
+
+  ballBody.position.set(dropPos.x, BALL_RADIUS + 0.02, dropPos.z);
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  ballMesh.position.copy(ballBody.position);
+  ballMesh.visible = true;
+  settled = true;
+  cameraMode = "tee";
+
+  var toPinFromDrop = Math.hypot(HOLE_POS.x - dropPos.x, HOLE_POS.z - dropPos.z);
+  els.lastShot.innerHTML = "Water<span class=\"unit\">, +1</span>";
+  els.toPin.innerHTML = toPinFromDrop.toFixed(1) + '<span class="unit">m</span>';
+  els.shotLine.textContent = choice === "retee"
+    ? "Re-teed after a splash, +1 stroke"
+    : "Dropped at the entry point, +1 stroke";
+
+  // Same aim-recompute every other post-shot rest does — aim 0 should always mean "straight at
+  // the pin from here."
+  var toPinDx = HOLE_POS.x - dropPos.x, toPinDz = HOLE_POS.z - dropPos.z;
+  HOLE_DISTANCE = toPinFromDrop || 1;
+  FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
+  RIGHT = { x: -FWD.z, z: FWD.x };
+  aimOffsetDeg = 0;
+  document.getElementById("aimVal").textContent = "0°";
+}
+
 // ---- Aim ----
 // Player-controlled offset from the tee->hole bearing (FWD), so a shot doesn't always have to
 // go dead straight at the pin. Camera stays anchored to the real hole bearing regardless —
@@ -1210,8 +1307,13 @@ var els = {
   powerNum: document.getElementById("powerNum"),
   powerState: document.getElementById("powerState"),
   strokes: document.getElementById("strokes"),
-  fastForwardHint: document.getElementById("fastForwardHint")
+  fastForwardHint: document.getElementById("fastForwardHint"),
+  waterModal: document.getElementById("waterPenaltyModal"),
+  reteeBtn: document.getElementById("reteeBtn")
 };
+
+document.getElementById("dropEntryBtn").addEventListener("click", function () { resolveWaterPenalty("entry"); });
+document.getElementById("reteeBtn").addEventListener("click", function () { resolveWaterPenalty("retee"); });
 
 var STORAGE_KEY = "swingLabServerUrl";
 var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
@@ -1332,31 +1434,33 @@ function animate() {
     var toPinNow = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
     if (toPinNow < CUP_RADIUS && ballBody.position.y < BALL_RADIUS + 0.3) {
       onHoleComplete();
+    } else if (!waterPenaltyPending && ballBody.position.y <= BALL_RADIUS + 0.15
+        && tileTypeAt(ballBody.position.x, ballBody.position.z) === "water") {
+      // Real golf only cares where the ball ends up, but "even touches the water" was asked
+      // for explicitly — checked on every frame the ball is near ground height, not just once
+      // it's fully stopped, so a skipping/bouncing ball can't skate across the top of a pond.
+      handleWaterEntry();
     } else {
       var speed = ballBody.velocity.length();
       if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
         settled = true;
         cameraMode = "result";
 
-        // Stroke-and-distance: a ball that comes to rest on water or out-of-bounds never lay
-        // there in real golf — it's replayed under penalty from where this shot was hit. Real
-        // golf's OB ruling is actually replay-from-the-tee-shot-source too (stroke and
-        // distance), same mechanic as water here, just no splash and a different message.
+        // Stroke-and-distance: a ball that comes to rest out-of-bounds never lay there in real
+        // golf — it's replayed under penalty from where this shot was hit (water is handled
+        // earlier, the moment it's touched, with its own drop/re-tee choice instead).
         var restTile = tileTypeAt(ballBody.position.x, ballBody.position.z);
-        if (restTile === "water" || restTile === "ob") {
-          if (restTile === "water") triggerWaterSplash(ballBody.position.x, ballBody.position.y, ballBody.position.z);
+        if (restTile === "ob") {
           strokesThisHole++;
           els.strokes.textContent = strokesThisHole;
           ballBody.position.copy(shotStartPos);
           ballBody.velocity.set(0, 0, 0);
           ballBody.angularVelocity.set(0, 0, 0);
           ballMesh.position.copy(ballBody.position);
-          els.lastShot.innerHTML = (restTile === "water" ? "Water" : "OB") + '<span class="unit">, +1</span>';
+          els.lastShot.innerHTML = "OB<span class=\"unit\">, +1</span>";
           var toPinFromDrop = Math.hypot(HOLE_POS.x - shotStartPos.x, HOLE_POS.z - shotStartPos.z);
           els.toPin.innerHTML = toPinFromDrop.toFixed(1) + '<span class="unit">m</span>';
-          els.shotLine.textContent = restTile === "water"
-            ? "Splash! Replayed from the same spot, +1 stroke"
-            : "Out of bounds! Replayed from the same spot, +1 stroke";
+          els.shotLine.textContent = "Out of bounds! Replayed from the same spot, +1 stroke";
           setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
         } else {
           var dx = ballBody.position.x - shotStartPos.x;
