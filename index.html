@@ -877,10 +877,13 @@
   var SEVERE_CURVE_EPS = FACE_EPS * 2.5;
   // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
   // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
-  // in-to-out vs out-to-in — the geometry derivation for FACE_SIGN read backwards on a real
-  // swing, so it's flipped back to 1 (confirmed empirically, not re-derived). PATH_SIGN is
-  // still an untested guess — flip it to -1 if a deliberately out-to-in or in-to-out test
-  // swing reads backwards.
+  // in-to-out vs out-to-in. Both signs below were only ever verified against the OLD path/face
+  // computation (real-time gravity projection for path, raw gamma integral for face) — now
+  // that both come from quaternion swing-twist decomposition instead, these need a fresh real
+  // test swing to confirm. Path's underlying physics didn't change (still "rotation about the
+  // fixed world-vertical axis," just computed via one consistent mechanism instead of a
+  // separate live-projection scheme), so 1 is a reasonable starting guess; face's computation
+  // changed for real (that was the actual bug being fixed), so treat its sign as fully unverified.
   var PATH_SIGN = 1;
   var FACE_SIGN = 1;
   var WINDOW_MS = 3000;
@@ -893,9 +896,11 @@
   var ROTATION_LOOKBACK_MS = 1800;
 
   var state = "idle"; // idle | calibrating | ready | swinging | result
-  var buffer = []; // {t, net, roll, yaw}
+  var buffer = []; // {t, net, alpha, beta, gamma, gx, gy, gz}
   var baseline = 0, noiseStd = 0, armThreshold = 2;
   var calibSamples = [];
+  var calibGyroSamples = []; // {alpha, beta, gamma} while held still, for bias calibration
+  var gyroBias = { alpha: 0, beta: 0, gamma: 0 };
   var calibStart = 0;
   var swingStart = null; // {t, idx}
   var swingPeak = null; // {t, net}
@@ -929,6 +934,59 @@
   function stddev(arr, m) {
     var v = arr.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / arr.length;
     return Math.sqrt(v);
+  }
+
+  var DEG2RAD = Math.PI / 180;
+
+  // ---- Orientation tracking (quaternion) ----
+  // Why this exists: naively integrating one rotation-rate component (e.g. raw gamma) over
+  // time is only valid if the device is rotating on that single axis alone. During a real
+  // swing it's rotating on all three axes simultaneously, and Euler-rate components don't
+  // integrate independently under simultaneous multi-axis rotation — summing gamma*dt doesn't
+  // equal "total rotation about a consistent axis" the way it would for pure single-axis spin.
+  // Full quaternion integration composes simultaneous rotations correctly; extracting a
+  // "twist" angle about a chosen fixed axis afterward (swing-twist decomposition) is the
+  // mathematically correct way to recover "how much did it rotate about THIS specific axis,"
+  // immune to that coupling error.
+  function quatMultiply(a, b) {
+    return {
+      w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+      x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+      y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+      z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w
+    };
+  }
+  function quatNormalize(q) {
+    var n = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z) || 1;
+    return { w: q.w / n, x: q.x / n, y: q.y / n, z: q.z / n };
+  }
+  // Angle of the rotation component of q about a fixed unit axis, expressed in the same
+  // reference frame q's rotation is defined in (standard swing-twist decomposition).
+  function twistAngleDeg(q, axis) {
+    var dot = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+    return 2 * Math.atan2(dot, q.w) * (180 / Math.PI);
+  }
+  // Replays bias-corrected gyro samples across a window, starting from identity (i.e. "the
+  // window's own start" defines the reference frame — no dependency on a long-lived tracker,
+  // so drift is bounded to whatever accumulates over this one ~1.8s window, not a whole session).
+  function computeOrientationOverWindow(samples) {
+    var q = { w: 1, x: 0, y: 0, z: 0 };
+    for (var k = 1; k < samples.length; k++) {
+      var dt = (samples[k].t - samples[k - 1].t) / 1000;
+      if (dt <= 0) continue;
+      var wx = samples[k].beta * DEG2RAD, wy = samples[k].gamma * DEG2RAD, wz = samples[k].alpha * DEG2RAD;
+      var wMag = magnitude(wx, wy, wz);
+      var angle = wMag * dt;
+      var dq;
+      if (wMag < 1e-6) {
+        dq = { w: 1, x: 0, y: 0, z: 0 };
+      } else {
+        var half = angle / 2, s = Math.sin(half) / wMag;
+        dq = { w: Math.cos(half), x: wx * s, y: wy * s, z: wz * s };
+      }
+      q = quatNormalize(quatMultiply(q, dq));
+    }
+    return q;
   }
 
   function renderHistory() {
@@ -991,14 +1049,23 @@
     var downswingDur = peakT - transition.t;
     var tempoRatio = (backswingDur > 40 && downswingDur > 40) ? clamp(backswingDur / downswingDur, 0.3, 9.9) : null;
 
-    // Net rotation across the whole window (address-ish through impact), not just the
-    // downswing sliver — a rectangle-rule integral of each sample's rate over its dt.
-    var pathTotal = 0, faceTotal = 0;
-    for (var k = 1; k < windowSamples.length; k++) {
-      var dt = (windowSamples[k].t - windowSamples[k - 1].t) / 1000;
-      pathTotal += windowSamples[k].yaw * dt;
-      faceTotal += windowSamples[k].roll * dt;
-    }
+    // Full orientation across the whole window (address-ish through impact), not just the
+    // downswing sliver, via quaternion integration — correctly composes the simultaneous
+    // multi-axis rotation a real swing has, unlike integrating one raw rate component alone.
+    var orientQ = computeOrientationOverWindow(windowSamples);
+
+    // Face = twist about the shaft axis, which by construction of starting the replay at
+    // identity IS just the window's own local Y axis — no separate reference capture needed.
+    var faceTotal = twistAngleDeg(orientQ, { x: 0, y: 1, z: 0 });
+
+    // Path = twist about true vertical, referenced against gravity as measured at the start
+    // of this window (address-ish) rather than gravity's live, ever-changing body-frame
+    // reading — same physical quantity as before (rotation about the fixed world-vertical
+    // axis), just computed as one consistent mechanism alongside face instead of a separate
+    // real-time projection-and-integrate scheme.
+    var gAddrMag = magnitude(winStart.gx || 0, winStart.gy || 0, winStart.gz || 0) || 1;
+    var gAddr = { x: (winStart.gx || 0) / gAddrMag, y: (winStart.gy || 0) / gAddrMag, z: (winStart.gz || 0) / gAddrMag };
+    var pathTotal = twistAngleDeg(orientQ, gAddr);
 
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
     var handMirror = isLefty ? -1 : 1;
@@ -1043,8 +1110,8 @@
     resultUntil = nowT + RESULT_HOLD_MS;
   }
 
-  function handleSample(net, yawRate, rollRate, t) {
-    buffer.push({ t: t, net: net, roll: rollRate, yaw: yawRate });
+  function handleSample(net, alpha, beta, gamma, gx, gy, gz, t) {
+    buffer.push({ t: t, net: net, alpha: alpha, beta: beta, gamma: gamma, gx: gx, gy: gy, gz: gz });
     var cutoff = t - WINDOW_MS;
     while (buffer.length && buffer[0].t < cutoff) buffer.shift();
 
@@ -1113,28 +1180,25 @@
     var rr = e.rotationRate || {};
     // rotationRate axes per spec: alpha = about Z, beta = about X, gamma = about Y —
     // i.e. the angular-velocity vector in device-local coordinates is (beta, gamma, alpha).
-    var rAlpha = rr.alpha || 0, rBeta = rr.beta || 0, rGamma = rr.gamma || 0;
+    var rawAlpha = rr.alpha || 0, rawBeta = rr.beta || 0, rawGamma = rr.gamma || 0;
 
-    // Yaw rate about true "up" (gravity), found by projecting that angular-velocity vector
-    // onto the measured gravity direction — this reads the swing's left/right turning rate
-    // (path) the same way no matter how the phone is gripped or tilted, since both vectors
-    // are expressed in the same device-local frame at the same instant.
     var gv = grav || src;
     var gx = gv.x || 0, gy = gv.y || 0, gz = gv.z || 0;
-    var gMag = magnitude(gx, gy, gz) || 1;
-    var yawRate = (rBeta * gx + rGamma * gy + rAlpha * gz) / gMag;
-
-    // Roll about the phone's own long axis (gamma) — with a fixed grip this stays aligned
-    // with the shaft, so it works as a clubface open/close proxy regardless of swing tilt.
-    var rollRate = rGamma;
-
-    lastRaw = { ax: ax, ay: ay, az: az, yaw: yawRate, roll: rollRate };
 
     if (state === "calibrating") {
       calibSamples.push(raw);
+      calibGyroSamples.push({ alpha: rawAlpha, beta: rawBeta, gamma: rawGamma });
       if (t - calibStart > 1100) {
         baseline = mean(calibSamples);
         noiseStd = Math.max(stddev(calibSamples, baseline), 0.05);
+        // A phone at rest should read zero rotation rate on every axis — any nonzero average
+        // here is pure gyro bias (a real, well-documented MEMS gyro characteristic), and left
+        // uncorrected it silently pollutes every rotation-based reading for the whole session.
+        gyroBias = {
+          alpha: mean(calibGyroSamples.map(function (s) { return s.alpha; })),
+          beta: mean(calibGyroSamples.map(function (s) { return s.beta; })),
+          gamma: mean(calibGyroSamples.map(function (s) { return s.gamma; }))
+        };
         updateThreshold();
         state = "ready";
         setPhase("ARMED — SWING", "armed");
@@ -1147,6 +1211,15 @@
       return;
     }
 
+    var alpha = rawAlpha - gyroBias.alpha, beta = rawBeta - gyroBias.beta, gamma = rawGamma - gyroBias.gamma;
+
+    // Still computed live for the debug panel and the arm/quiet heuristics' phase feel — not
+    // used for the final face/path numbers anymore, those come from the windowed quaternion
+    // replay in finalizeSwing, which is immune to the coupling error this simple version has.
+    var gMag = magnitude(gx, gy, gz) || 1;
+    var liveYawRate = (beta * gx + gamma * gy + alpha * gz) / gMag;
+    lastRaw = { ax: ax, ay: ay, az: az, yaw: liveYawRate, roll: gamma };
+
     var net = Math.abs(raw - baseline);
 
     // MEMS accelerometer bias drifts as the phone warms up in the hand over a session, so a
@@ -1158,7 +1231,7 @@
       baseline += (raw - baseline) * DRIFT_ADAPT_RATE;
     }
 
-    handleSample(net, yawRate, rollRate, t);
+    handleSample(net, alpha, beta, gamma, gx, gy, gz, t);
   }
 
   function updateThreshold() {
@@ -1169,6 +1242,7 @@
   function beginCalibration() {
     state = "calibrating";
     calibSamples = [];
+    calibGyroSamples = [];
     calibStart = performance.now();
     setPhase("HOLD STILL…", "hot");
     setDot(null);
