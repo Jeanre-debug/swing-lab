@@ -1,0 +1,475 @@
+<title>Swing Lab — Course Builder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+  :root {
+    --bg: #0c120e;
+    --panel: #131b15;
+    --panel-raised: #182219;
+    --line: #26332a;
+    --line-strong: #364638;
+    --turf: #4bab6d;
+    --flag: #e8543f;
+    --sand: #d9b877;
+    --paper: #eef2ea;
+    --muted: #8a9a8f;
+    --muted-dim: #566259;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--paper); font-family: var(--sans); }
+  body { display: flex; justify-content: center; padding: 20px 16px 40px; }
+
+  .wrap { width: 100%; max-width: 1040px; display: flex; flex-direction: column; gap: 14px; }
+
+  .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 2px 0 0; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; }
+
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field .label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .field input, .field select {
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    outline: none;
+  }
+  .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--sand); }
+  #nameInput { width: 220px; }
+
+  .btn {
+    appearance: none;
+    border: none;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 9px 14px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  .btn:focus-visible { outline: 2px solid var(--sand); }
+  .btn.primary { background: var(--turf); border-color: var(--turf); color: #06170d; }
+  .btn.danger { background: color-mix(in srgb, var(--flag) 16%, var(--panel-raised)); border-color: color-mix(in srgb, var(--flag) 40%, var(--line-strong)); }
+  .btn:disabled { opacity: 0.45; }
+  .spacer { flex: 1; }
+
+  .main-row { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+
+  .palette { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }
+  .palette .group-label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 6px 0 -2px; }
+  .tool {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 8px 10px;
+    border-radius: 8px;
+    text-align: left;
+  }
+  .tool:focus-visible { outline: 2px solid var(--sand); }
+  .tool.active { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 14%, var(--panel-raised)); }
+  .tool .swatch { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.25); }
+  .tool .count { margin-left: auto; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11px; }
+
+  .grid-wrap {
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px;
+    max-height: 74vh;
+    overflow: auto;
+  }
+  canvas#grid { display: block; cursor: crosshair; touch-action: none; }
+
+  .checklist { display: flex; flex-direction: column; gap: 6px; min-width: 190px; }
+  .check-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .check-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); flex-shrink: 0; }
+  .check-item.ok { color: var(--paper); }
+  .check-item.ok .dot { background: var(--turf); }
+
+  .message { font-size: 12.5px; padding: 10px 12px; border-radius: 8px; display: none; }
+  .message.show { display: block; }
+  .message.error { background: color-mix(in srgb, var(--flag) 16%, var(--panel-raised)); border: 1px solid color-mix(in srgb, var(--flag) 45%, var(--line)); color: var(--paper); }
+  .message.success { background: color-mix(in srgb, var(--turf) 14%, var(--panel-raised)); border: 1px solid color-mix(in srgb, var(--turf) 40%, var(--line)); color: var(--paper); }
+  .message a { color: var(--turf); font-weight: 700; }
+
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(4, 8, 5, 0.6);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.15s ease;
+    z-index: 20;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .modal {
+    width: 100%; max-width: 420px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px 18px;
+    max-height: 70vh;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .modal .head { display: flex; justify-content: space-between; align-items: center; }
+  .modal .head button { appearance: none; border: none; background: none; color: var(--muted); font-size: 13px; }
+  .course-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .course-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: var(--panel-raised); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 12px; font-size: 13px;
+  }
+  .course-row button { appearance: none; border: none; background: var(--turf); color: #06170d; font-weight: 700; font-size: 11.5px; padding: 6px 10px; border-radius: 6px; }
+  .course-row .meta { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .course-empty { font-size: 12.5px; color: var(--muted); padding: 8px 2px; }
+</style>
+
+<div class="wrap">
+  <div>
+    <div class="eyebrow">Phase 2 · Course Builder</div>
+    <h1>Swing Lab — Builder</h1>
+  </div>
+
+  <div class="panel toolbar">
+    <div class="field">
+      <span class="label">Course Name</span>
+      <input id="nameInput" placeholder="Untitled Hole" autocomplete="off">
+    </div>
+    <div class="field">
+      <span class="label">Par</span>
+      <select id="parInput">
+        <option value="3">3</option>
+        <option value="4" selected>4</option>
+        <option value="5">5</option>
+      </select>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="newBtn">New</button>
+    <button class="btn" id="loadBtn">Load</button>
+    <button class="btn primary" id="saveBtn">Save</button>
+    <button class="btn" id="playBtn" disabled>Play &rarr;</button>
+  </div>
+
+  <div class="message" id="message"></div>
+
+  <div class="main-row">
+    <div class="palette">
+      <div class="group-label">Markers</div>
+      <button class="tool" data-tool="tee"><span class="swatch" style="background:#d9b877"></span>Tee</button>
+      <button class="tool" data-tool="pin"><span class="swatch" style="background:#e8543f"></span>Pin</button>
+      <div class="group-label">Tiles</div>
+      <button class="tool active" data-tool="fairway"><span class="swatch" style="background:#5a9c5f"></span>Fairway<span class="count" id="cnt-fairway">0</span></button>
+      <button class="tool" data-tool="rough"><span class="swatch" style="background:#3c7a4a"></span>Rough<span class="count" id="cnt-rough">0</span></button>
+      <button class="tool" data-tool="green"><span class="swatch" style="background:#6fb96a"></span>Green<span class="count" id="cnt-green">0</span></button>
+      <button class="tool" data-tool="bunker"><span class="swatch" style="background:#d9b877"></span>Bunker<span class="count" id="cnt-bunker">0</span></button>
+      <button class="tool" data-tool="water"><span class="swatch" style="background:#3a7fc1"></span>Water<span class="count" id="cnt-water">0</span></button>
+      <button class="tool" data-tool="tree"><span class="swatch" style="background:#2e6b3e"></span>Tree<span class="count" id="cnt-tree">0</span></button>
+    </div>
+
+    <div class="grid-wrap">
+      <canvas id="grid"></canvas>
+    </div>
+
+    <div class="checklist">
+      <div class="check-item" id="check-tee"><span class="dot"></span>Tee placed</div>
+      <div class="check-item" id="check-pin"><span class="dot"></span>Pin placed</div>
+      <div class="check-item" id="check-fairway"><span class="dot"></span>Fairway laid (15+ tiles)</div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="loadOverlay">
+  <div class="modal">
+    <div class="head">
+      <span class="eyebrow">Load Course</span>
+      <button id="closeLoad">Close</button>
+    </div>
+    <div class="course-list" id="courseList"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var SUPABASE_URL = "https://bgoolrrjbagrifonwfgw.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
+  var SB_HEADERS = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
+
+  var COLS = 24, ROWS = 50, TILE_SIZE = 5;
+  var CELL_PX = 14;
+
+  var TYPE_COLOR = {
+    rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a",
+    bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e"
+  };
+
+  var tiles = [];
+  var tee = null, pin = null;
+  var currentCourseId = null;
+  var activeTool = "fairway";
+
+  function newGrid(cols, rows) {
+    var g = [];
+    for (var y = 0; y < rows; y++) g.push(new Array(cols).fill("rough"));
+    return g;
+  }
+  tiles = newGrid(COLS, ROWS);
+
+  var $ = function (id) { return document.getElementById(id); };
+  var canvas = $("grid");
+  var ctx = canvas.getContext("2d");
+
+  var els = {
+    name: $("nameInput"), par: $("parInput"),
+    newBtn: $("newBtn"), loadBtn: $("loadBtn"), saveBtn: $("saveBtn"), playBtn: $("playBtn"),
+    message: $("message"),
+    loadOverlay: $("loadOverlay"), closeLoad: $("closeLoad"), courseList: $("courseList"),
+    checkTee: $("check-tee"), checkPin: $("check-pin"), checkFairway: $("check-fairway")
+  };
+
+  function resizeCanvas() {
+    canvas.width = COLS * CELL_PX;
+    canvas.height = ROWS * CELL_PX;
+  }
+  resizeCanvas();
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (var y = 0; y < ROWS; y++) {
+      for (var x = 0; x < COLS; x++) {
+        ctx.fillStyle = TYPE_COLOR[tiles[y][x]] || TYPE_COLOR.rough;
+        ctx.fillRect(x * CELL_PX, y * CELL_PX, CELL_PX, CELL_PX);
+      }
+    }
+    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.lineWidth = 1;
+    for (var gy = 0; gy <= ROWS; gy++) {
+      ctx.beginPath(); ctx.moveTo(0, gy * CELL_PX + 0.5); ctx.lineTo(canvas.width, gy * CELL_PX + 0.5); ctx.stroke();
+    }
+    for (var gx = 0; gx <= COLS; gx++) {
+      ctx.beginPath(); ctx.moveTo(gx * CELL_PX + 0.5, 0); ctx.lineTo(gx * CELL_PX + 0.5, canvas.height); ctx.stroke();
+    }
+
+    if (tee) drawMarker(tee, "#d9b877", "T");
+    if (pin) drawMarker(pin, "#e8543f", "P");
+  }
+
+  function drawMarker(cell, color, label) {
+    var cx = cell.x * CELL_PX + CELL_PX / 2, cy = cell.y * CELL_PX + CELL_PX / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CELL_PX * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(6,10,7,0.6)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#06170d";
+    ctx.font = "bold " + Math.round(CELL_PX * 0.6) + "px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, cx, cy + 0.5);
+  }
+
+  function updateStats() {
+    var counts = { rough: 0, fairway: 0, green: 0, bunker: 0, water: 0, tree: 0 };
+    for (var y = 0; y < ROWS; y++) for (var x = 0; x < COLS; x++) counts[tiles[y][x]]++;
+    Object.keys(counts).forEach(function (k) {
+      var el = $("cnt-" + k);
+      if (el) el.textContent = counts[k];
+    });
+
+    setCheck(els.checkTee, !!tee);
+    setCheck(els.checkPin, !!pin);
+    setCheck(els.checkFairway, counts.fairway >= 15);
+  }
+
+  function setCheck(el, ok) { el.classList.toggle("ok", ok); }
+
+  function showMessage(text, kind, linkHref) {
+    els.message.className = "message show " + kind;
+    els.message.innerHTML = text + (linkHref ? ' <a href="' + linkHref + '" target="_blank" rel="noopener">Open it &rarr;</a>' : "");
+  }
+  function clearMessage() { els.message.className = "message"; els.message.innerHTML = ""; }
+
+  // ---- Palette ----
+  document.querySelectorAll(".tool").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      document.querySelectorAll(".tool").forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      activeTool = btn.dataset.tool;
+    });
+  });
+
+  // ---- Paint ----
+  var painting = false;
+  var lastCell = null;
+
+  function cellFromEvent(e) {
+    var rect = canvas.getBoundingClientRect();
+    var x = Math.floor((e.clientX - rect.left) / CELL_PX);
+    var y = Math.floor((e.clientY - rect.top) / CELL_PX);
+    if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return null;
+    return { x: x, y: y };
+  }
+
+  function paintAt(cell) {
+    if (activeTool === "tee") { tee = cell; }
+    else if (activeTool === "pin") { pin = cell; }
+    else { tiles[cell.y][cell.x] = activeTool; }
+    draw();
+    updateStats();
+  }
+
+  canvas.addEventListener("pointerdown", function (e) {
+    var cell = cellFromEvent(e);
+    if (!cell) return;
+    painting = true;
+    lastCell = null;
+    canvas.setPointerCapture(e.pointerId);
+    paintAt(cell);
+    lastCell = cell;
+  });
+  canvas.addEventListener("pointermove", function (e) {
+    if (!painting) return;
+    var cell = cellFromEvent(e);
+    if (!cell) return;
+    if (lastCell && lastCell.x === cell.x && lastCell.y === cell.y) return;
+    paintAt(cell);
+    lastCell = cell;
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (evt) {
+    canvas.addEventListener(evt, function () { painting = false; });
+  });
+
+  // ---- New ----
+  els.newBtn.addEventListener("click", function () {
+    COLS = 24; ROWS = 50;
+    tiles = newGrid(COLS, ROWS);
+    tee = null; pin = null;
+    currentCourseId = null;
+    els.name.value = ""; els.par.value = "4";
+    els.playBtn.disabled = true;
+    resizeCanvas(); draw(); updateStats(); clearMessage();
+  });
+
+  // ---- Save ----
+  function buildPayload() {
+    var sparse = [];
+    for (var y = 0; y < ROWS; y++) {
+      for (var x = 0; x < COLS; x++) {
+        if (tiles[y][x] !== "rough") sparse.push({ x: x, y: y, type: tiles[y][x] });
+      }
+    }
+    return {
+      name: els.name.value.trim() || "Untitled Hole",
+      par: parseInt(els.par.value, 10),
+      grid_cols: COLS, grid_rows: ROWS, tile_size: TILE_SIZE,
+      tiles: sparse, tee: tee, pin: pin
+    };
+  }
+
+  els.saveBtn.addEventListener("click", function () {
+    if (!tee || !pin) {
+      showMessage("Place a tee and a pin before saving.", "error");
+      return;
+    }
+    var payload = buildPayload();
+    var isUpdate = !!currentCourseId;
+    var url = SUPABASE_URL + "/rest/v1/courses" + (isUpdate ? "?id=eq." + currentCourseId : "");
+    fetch(url, {
+      method: isUpdate ? "PATCH" : "POST",
+      headers: Object.assign({ "Content-Type": "application/json", Prefer: "return=representation" }, SB_HEADERS),
+      body: JSON.stringify(payload)
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("save failed (" + res.status + ")");
+        return res.json();
+      })
+      .then(function (rows) {
+        currentCourseId = rows[0].id;
+        els.playBtn.disabled = false;
+        showMessage("Saved.", "success", "course.html?course=" + currentCourseId);
+      })
+      .catch(function (err) {
+        showMessage("Couldn't save: " + err.message, "error");
+      });
+  });
+
+  els.playBtn.addEventListener("click", function () {
+    if (currentCourseId) window.open("course.html?course=" + currentCourseId, "_blank");
+  });
+
+  // ---- Load ----
+  els.loadBtn.addEventListener("click", function () {
+    els.loadOverlay.classList.add("show");
+    els.courseList.innerHTML = '<div class="course-empty">Loading…</div>';
+    fetch(SUPABASE_URL + "/rest/v1/courses?select=id,name,par,updated_at&order=updated_at.desc&limit=25", { headers: SB_HEADERS })
+      .then(function (res) { return res.json(); })
+      .then(function (rows) {
+        if (!rows.length) {
+          els.courseList.innerHTML = '<div class="course-empty">No saved courses yet.</div>';
+          return;
+        }
+        els.courseList.innerHTML = "";
+        rows.forEach(function (row) {
+          var el = document.createElement("div");
+          el.className = "course-row";
+          el.innerHTML = '<span>' + row.name + '<br><span class="meta">Par ' + row.par + ' · ' + new Date(row.updated_at).toLocaleString() + '</span></span><button>Load</button>';
+          el.querySelector("button").addEventListener("click", function () { loadCourse(row.id); });
+          els.courseList.appendChild(el);
+        });
+      })
+      .catch(function () {
+        els.courseList.innerHTML = '<div class="course-empty">Couldn’t reach Supabase.</div>';
+      });
+  });
+  els.closeLoad.addEventListener("click", function () { els.loadOverlay.classList.remove("show"); });
+  els.loadOverlay.addEventListener("click", function (e) {
+    if (e.target === els.loadOverlay) els.loadOverlay.classList.remove("show");
+  });
+
+  function loadCourse(id) {
+    fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + id + "&select=*", { headers: SB_HEADERS })
+      .then(function (res) { return res.json(); })
+      .then(function (rows) {
+        var c = rows[0];
+        if (!c) return;
+        COLS = c.grid_cols; ROWS = c.grid_rows; TILE_SIZE = c.tile_size || 5;
+        tiles = newGrid(COLS, ROWS);
+        (c.tiles || []).forEach(function (t) {
+          if (tiles[t.y] && t.x >= 0 && t.x < COLS) tiles[t.y][t.x] = t.type;
+        });
+        tee = c.tee; pin = c.pin;
+        currentCourseId = c.id;
+        els.name.value = c.name; els.par.value = c.par;
+        els.playBtn.disabled = false;
+        resizeCanvas(); draw(); updateStats(); clearMessage();
+        els.loadOverlay.classList.remove("show");
+      })
+      .catch(function () {
+        showMessage("Couldn't load that course.", "error");
+      });
+  }
+
+  draw();
+  updateStats();
+})();
+</script>

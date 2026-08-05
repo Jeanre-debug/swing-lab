@@ -154,12 +154,27 @@
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 
-// ---- Hole layout (hardcoded — Phase 1 has no course builder) ----
-var TEE_Z = 6;
-var HOLE_DISTANCE = 150;
-var HOLE_Z = TEE_Z - HOLE_DISTANCE;
-var FAIRWAY_WIDTH = 18;
+// ---- Hole layout: the Phase 1 hardcoded hole, or a course loaded from Supabase ----
 var BALL_RADIUS = 0.45;
+var DEFAULT_FAIRWAY_WIDTH = 18;
+
+// TEE_POS/HOLE_POS are world {x,z}; FWD/RIGHT are the unit bearing from tee to hole and its
+// perpendicular, so a course doesn't have to run straight down -Z the way the hardcoded hole
+// does — shots, curve, and camera all work off these vectors instead of raw axes.
+var TEE_POS = { x: 0, z: 0 };
+var HOLE_POS = { x: 0, z: -1 };
+var FWD = { x: 0, z: -1 };
+var RIGHT = { x: 1, z: 0 };
+var HOLE_DISTANCE = 1;
+
+function setHoleVectors(tee, pin) {
+  TEE_POS = tee;
+  HOLE_POS = pin;
+  var dx = pin.x - tee.x, dz = pin.z - tee.z;
+  HOLE_DISTANCE = Math.hypot(dx, dz) || 1;
+  FWD = { x: dx / HOLE_DISTANCE, z: dz / HOLE_DISTANCE };
+  RIGHT = { x: -FWD.z, z: FWD.x };
+}
 
 // ---- Renderer / scene ----
 var viewport = document.getElementById("viewport");
@@ -175,7 +190,6 @@ scene.background = new THREE.Color(skyColor);
 scene.fog = new THREE.Fog(skyColor, 60, 220);
 
 var camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 800);
-camera.position.set(0, 2.6, TEE_Z + 7);
 
 window.addEventListener("resize", function () {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -195,112 +209,221 @@ sun.shadow.camera.top = 60;
 sun.shadow.camera.bottom = -80;
 scene.add(sun);
 
-// ---- Low-poly terrain helper ----
-function makeGround(width, length, segX, segZ, amplitude, color, z) {
-  var geo = new THREE.PlaneGeometry(width, length, segX, segZ);
-  geo.rotateX(-Math.PI / 2);
-  var pos = geo.attributes.position;
-  for (var i = 0; i < pos.count; i++) {
-    var x = pos.getX(i), pz = pos.getZ(i);
-    var h = (Math.sin(x * 0.15 + pz * 0.05) + Math.cos(pz * 0.12)) * amplitude;
-    pos.setY(i, h);
+// Shared between both hole builders below.
+function addHoleAndFlag(pos) {
+  var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
+  hole.position.set(pos.x, 0.02, pos.z);
+  scene.add(hole);
+
+  var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0xe8e4d8 }));
+  pole.position.set(pos.x, 1.1, pos.z);
+  pole.castShadow = true;
+  scene.add(pole);
+
+  var flagShape = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshStandardMaterial({ color: 0xe8543f, side: THREE.DoubleSide, flatShading: true }));
+  flagShape.position.set(pos.x + 0.28, 1.95, pos.z);
+  flagShape.castShadow = true;
+  scene.add(flagShape);
+}
+
+function addTeeMarkers(pos, right) {
+  [-1.1, 1.1].forEach(function (side) {
+    var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd9b877, flatShading: true }));
+    marker.position.set(pos.x + right.x * side, 0.12, pos.z + right.z * side);
+    scene.add(marker);
+  });
+}
+
+// ---- Hole builder A: the Phase 1 hardcoded hole (no course id in the URL) ----
+function buildDefaultHole() {
+  setHoleVectors({ x: 0, z: 6 }, { x: 0, z: 6 - 150 });
+
+  function makeGround(width, length, segX, segZ, amplitude, color, z) {
+    var geo = new THREE.PlaneGeometry(width, length, segX, segZ);
+    geo.rotateX(-Math.PI / 2);
+    var pos = geo.attributes.position;
+    for (var i = 0; i < pos.count; i++) {
+      var x = pos.getX(i), pz = pos.getZ(i);
+      var h = (Math.sin(x * 0.15 + pz * 0.05) + Math.cos(pz * 0.12)) * amplitude;
+      pos.setY(i, h);
+    }
+    geo.computeVertexNormals();
+    var mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: color, flatShading: true, roughness: 1 }));
+    mesh.position.z = z;
+    mesh.receiveShadow = true;
+    return mesh;
   }
-  geo.computeVertexNormals();
-  var mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: color, flatShading: true, roughness: 1 }));
-  mesh.position.z = z;
+
+  var fairwayCenterZ = (TEE_POS.z + HOLE_POS.z) / 2;
+  scene.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
+  scene.add(makeGround(DEFAULT_FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
+
+  var green = new THREE.Mesh(
+    new THREE.CircleGeometry(9, 24),
+    new THREE.MeshStandardMaterial({ color: 0x6fb96a, flatShading: true, roughness: 1 })
+  );
+  green.rotation.x = -Math.PI / 2;
+  green.position.set(HOLE_POS.x, 0.06, HOLE_POS.z);
+  green.receiveShadow = true;
+  scene.add(green);
+
+  addHoleAndFlag(HOLE_POS);
+  addTeeMarkers(TEE_POS, RIGHT);
+
+  // Decorative low-poly trees, no collision
+  function makeTree(x, z, scale) {
+    var group = new THREE.Group();
+    var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }));
+    trunk.position.y = 0.7;
+    var leaves = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }));
+    leaves.position.y = 2.3;
+    trunk.castShadow = leaves.castShadow = true;
+    group.add(trunk, leaves);
+    group.position.set(x, 0, z);
+    group.scale.setScalar(scale);
+    return group;
+  }
+  for (var t = 0; t < 10; t++) {
+    var side = t % 2 === 0 ? 1 : -1;
+    var tz = TEE_POS.z - 8 - (t * (HOLE_DISTANCE / 10));
+    scene.add(makeTree(side * (10 + Math.random() * 6), tz, 0.8 + Math.random() * 0.5));
+  }
+}
+
+// ---- Hole builder B: a course.tiles grid saved from builder.html ----
+var TILE_STYLE = {
+  rough: { color: 0x3c7a4a, y: -0.02 },
+  fairway: { color: 0x5a9c5f, y: 0 },
+  green: { color: 0x6fb96a, y: 0.03 },
+  bunker: { color: 0xd9b877, y: -0.06 },
+  water: { color: 0x3a7fc1, y: -0.08 },
+  tree: { color: 0x3c7a4a, y: -0.02 } // base under a tree tile is grass; the tree itself sits on top
+};
+
+function buildLayerMesh(cells, color, yOffset, tileSize) {
+  if (!cells.length) return null;
+  var geo = new THREE.BoxGeometry(tileSize * 0.98, 0.14, tileSize * 0.98);
+  var mat = new THREE.MeshStandardMaterial({ color: color, flatShading: true, roughness: 1 });
+  var mesh = new THREE.InstancedMesh(geo, mat, cells.length);
   mesh.receiveShadow = true;
+  var m = new THREE.Matrix4();
+  cells.forEach(function (c, i) {
+    m.makeTranslation(c.x, yOffset, c.z);
+    mesh.setMatrixAt(i, m);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
   return mesh;
 }
 
-var fairwayCenterZ = TEE_Z - HOLE_DISTANCE / 2;
-scene.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
-scene.add(makeGround(FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
+function buildTileHole(course) {
+  var cols = course.grid_cols, rows = course.grid_rows, tileSize = course.tile_size || 5;
 
-// Putting green
-var green = new THREE.Mesh(
-  new THREE.CircleGeometry(9, 24),
-  new THREE.MeshStandardMaterial({ color: 0x6fb96a, flatShading: true, roughness: 1 })
-);
-green.rotation.x = -Math.PI / 2;
-green.position.set(0, 0.06, HOLE_Z);
-green.receiveShadow = true;
-scene.add(green);
+  function worldFromTile(tx, ty) {
+    return { x: (tx - cols / 2) * tileSize, z: -ty * tileSize };
+  }
 
-// Hole + flag
-var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
-hole.position.set(0, 0.02, HOLE_Z);
-scene.add(hole);
+  setHoleVectors(worldFromTile(course.tee.x, course.tee.y), worldFromTile(course.pin.x, course.pin.y));
 
-var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0xe8e4d8 }));
-pole.position.set(0, 1.1, HOLE_Z);
-pole.castShadow = true;
-scene.add(pole);
+  var grid = [];
+  for (var y = 0; y < rows; y++) grid.push(new Array(cols).fill("rough"));
+  (course.tiles || []).forEach(function (t) {
+    if (grid[t.y] && t.x >= 0 && t.x < cols) grid[t.y][t.x] = t.type;
+  });
 
-var flagShape = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshStandardMaterial({ color: 0xe8543f, side: THREE.DoubleSide, flatShading: true }));
-flagShape.position.set(0.28, 1.95, HOLE_Z);
-flagShape.castShadow = true;
-scene.add(flagShape);
+  var byType = {};
+  var treeCells = [];
+  for (var ty = 0; ty < rows; ty++) {
+    for (var tx = 0; tx < cols; tx++) {
+      var type = grid[ty][tx];
+      var w = worldFromTile(tx, ty);
+      (byType[type] || (byType[type] = [])).push(w);
+      if (type === "tree") treeCells.push(w);
+    }
+  }
 
-// Tee markers
-[-1.1, 1.1].forEach(function (x) {
-  var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd9b877, flatShading: true }));
-  marker.position.set(x, 0.12, TEE_Z);
-  scene.add(marker);
-});
+  Object.keys(byType).forEach(function (type) {
+    var style = TILE_STYLE[type] || TILE_STYLE.rough;
+    var mesh = buildLayerMesh(byType[type], style.color, style.y, tileSize);
+    if (mesh) scene.add(mesh);
+  });
 
-// Decorative low-poly trees, no collision
-function makeTree(x, z, scale) {
-  var group = new THREE.Group();
-  var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6), new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }));
-  trunk.position.y = 0.7;
-  var leaves = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 7), new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }));
-  leaves.position.y = 2.3;
-  trunk.castShadow = leaves.castShadow = true;
-  group.add(trunk, leaves);
-  group.position.set(x, 0, z);
-  group.scale.setScalar(scale);
-  return group;
+  if (treeCells.length) {
+    var trunkMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.12, 0.16, 1.4, 6),
+      new THREE.MeshStandardMaterial({ color: 0x6b4a34, flatShading: true }),
+      treeCells.length
+    );
+    var leafMesh = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1.1, 2.4, 7),
+      new THREE.MeshStandardMaterial({ color: 0x2e6b3e, flatShading: true }),
+      treeCells.length
+    );
+    trunkMesh.castShadow = leafMesh.castShadow = true;
+    var m = new THREE.Matrix4();
+    var q = new THREE.Quaternion();
+    treeCells.forEach(function (w, i) {
+      var scale = 0.8 + Math.random() * 0.5;
+      m.compose(new THREE.Vector3(w.x, 0.7 * scale, w.z), q, new THREE.Vector3(scale, scale, scale));
+      trunkMesh.setMatrixAt(i, m);
+      m.compose(new THREE.Vector3(w.x, 2.3 * scale, w.z), q, new THREE.Vector3(scale, scale, scale));
+      leafMesh.setMatrixAt(i, m);
+    });
+    trunkMesh.instanceMatrix.needsUpdate = true;
+    leafMesh.instanceMatrix.needsUpdate = true;
+    scene.add(trunkMesh, leafMesh);
+  }
+
+  addHoleAndFlag(HOLE_POS);
+  addTeeMarkers(TEE_POS, RIGHT);
 }
-for (var t = 0; t < 10; t++) {
-  var side = t % 2 === 0 ? 1 : -1;
-  var tz = TEE_Z - 8 - (t * (HOLE_DISTANCE / 10));
-  scene.add(makeTree(side * (10 + Math.random() * 6), tz, 0.8 + Math.random() * 0.5));
+
+// ---- Ball + physics + gameplay bootstrap ----
+// Deferred behind a function because loading a course from Supabase is async — this runs
+// only once whichever hole builder above has finished setting TEE_POS/HOLE_POS/FWD/RIGHT.
+var ballMesh, world, ballBody;
+
+function startGameplay() {
+  camera.position.set(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
+
+  ballMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.6 })
+  );
+  ballMesh.castShadow = true;
+  scene.add(ballMesh);
+
+  // The visual terrain has gentle vertex displacement (default hole) or per-tile height
+  // (tile courses), but the physics ground is a single flat plane — matching either to a
+  // heightfield is more precision than Phase 1/2 needs; a ball occasionally clipping a small
+  // visual bump is an acceptable trade for now.
+  world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+
+  var groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+  groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+  world.addBody(groundBody);
+
+  ballBody = new CANNON.Body({
+    mass: 0.045,
+    shape: new CANNON.Sphere(BALL_RADIUS),
+    linearDamping: 0.32,
+    angularDamping: 0.5
+  });
+  world.addBody(ballBody);
+
+  var contact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
+    friction: 0.45,
+    restitution: 0.35
+  });
+  world.addContactMaterial(contact);
+
+  resetBall();
+  if (els.serverUrl.value) connect();
+  clock = new THREE.Clock();
+  animate();
 }
-
-// ---- Ball ----
-var ballMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
-  new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.6 })
-);
-ballMesh.castShadow = true;
-scene.add(ballMesh);
-
-// ---- Physics (Cannon-es) ----
-// The visual fairway/rough has gentle vertex displacement for looks, but the physics ground
-// is a single flat plane — matching a heightfield to the visual terrain is more precision than
-// Phase 1 needs; a ball occasionally clipping a small visual bump is an acceptable trade for now.
-var world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
-
-var groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-world.addBody(groundBody);
-
-var ballBody = new CANNON.Body({
-  mass: 0.045,
-  shape: new CANNON.Sphere(BALL_RADIUS),
-  linearDamping: 0.32,
-  angularDamping: 0.5
-});
-world.addBody(ballBody);
-
-var contact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
-  friction: 0.45,
-  restitution: 0.35
-});
-world.addContactMaterial(contact);
 
 function resetBall() {
-  ballBody.position.set(0, BALL_RADIUS + 0.02, TEE_Z);
+  ballBody.position.set(TEE_POS.x, BALL_RADIUS + 0.02, TEE_POS.z);
   ballBody.velocity.set(0, 0, 0);
   ballBody.angularVelocity.set(0, 0, 0);
   ballBody.wakeUp();
@@ -344,9 +467,9 @@ function launchShot(shot) {
   shotStartPos = ballBody.position.clone();
 
   var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult;
-  // +X in this scene is the golfer's right (camera faces -Z toward the hole). On the phone,
+  // RIGHT is the golfer's right (perpendicular to the tee->hole bearing, FWD). On the phone,
   // positive faceVal means CLOSED, which for a right-handed golfer starts/curves the ball
-  // LEFT (-X) — so both terms need the sign flipped to land in the correct direction here.
+  // LEFT — so both terms need the sign flipped to land in the correct direction here.
   var startAngleDeg = clamp(-faceVal * START_ANGLE_SCALE, -32, 32);
   // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
   // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
@@ -355,11 +478,13 @@ function launchShot(shot) {
 
   var angleRad = startAngleDeg * DEG2RAD;
   var loftRad = loftDeg * DEG2RAD;
+  var forwardSpeed = speed * Math.cos(angleRad) * Math.cos(loftRad);
+  var sideSpeed = speed * Math.sin(angleRad) * Math.cos(loftRad);
 
   ballBody.velocity.set(
-    speed * Math.sin(angleRad) * Math.cos(loftRad),
+    FWD.x * forwardSpeed + RIGHT.x * sideSpeed,
     speed * Math.sin(loftRad),
-    -speed * Math.cos(angleRad) * Math.cos(loftRad)
+    FWD.z * forwardSpeed + RIGHT.z * sideSpeed
   );
 
   els.lastShot.innerHTML = "–<span class=\"unit\">m</span>";
@@ -412,12 +537,10 @@ function connect() {
 }
 els.connectBtn.addEventListener("click", connect);
 document.getElementById("reset").addEventListener("click", resetBall);
-if (els.serverUrl.value) connect();
 
 // ---- Animation loop ----
-var clock = new THREE.Clock();
-resetBall();
-
+// clock/resetBall/connect are all invoked from startGameplay() at the bottom of this file,
+// once whichever hole builder (default or a loaded course) has finished running.
 function animate() {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 1 / 30);
@@ -425,7 +548,8 @@ function animate() {
   if (!settled) {
     var airborne = ballBody.position.y > BALL_RADIUS + 0.05;
     if (airborne && flightCurveStrength !== 0) {
-      ballBody.velocity.x += flightCurveStrength * CURVE_ACCEL * dt;
+      ballBody.velocity.x += RIGHT.x * flightCurveStrength * CURVE_ACCEL * dt;
+      ballBody.velocity.z += RIGHT.z * flightCurveStrength * CURVE_ACCEL * dt;
     }
   }
 
@@ -442,24 +566,52 @@ function animate() {
       var dx = ballBody.position.x - shotStartPos.x;
       var dz = ballBody.position.z - shotStartPos.z;
       var carried = Math.sqrt(dx * dx + dz * dz);
-      var toPin = Math.hypot(ballBody.position.x - 0, ballBody.position.z - HOLE_Z);
+      var toPin = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
       els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
       els.toPin.innerHTML = toPin.toFixed(1) + '<span class="unit">m</span>';
     }
   }
 
-  // Camera
+  // Camera — offset behind the tee/ball along -FWD (i.e. back toward where the golfer stands)
+  // and looking forward along +FWD, so this works the same regardless of hole orientation.
   if (cameraMode === "tee") {
-    camera.position.lerp(new THREE.Vector3(0, 2.6, TEE_Z + 7), 0.08);
-    camera.lookAt(0, 1, TEE_Z - 25);
+    var teeCamPos = new THREE.Vector3(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
+    camera.position.lerp(teeCamPos, 0.08);
+    camera.lookAt(TEE_POS.x + FWD.x * 25, 1, TEE_POS.z + FWD.z * 25);
   } else {
-    var behind = new THREE.Vector3(0, 3.2, 7);
-    var desired = new THREE.Vector3(ballMesh.position.x + behind.x, behind.y, ballMesh.position.z + behind.z);
+    var desired = new THREE.Vector3(ballMesh.position.x - FWD.x * 7, ballMesh.position.y + 3.2, ballMesh.position.z - FWD.z * 7);
     camera.position.lerp(desired, 0.06);
-    camera.lookAt(ballMesh.position.x, ballMesh.position.y + 0.5, ballMesh.position.z - 6);
+    camera.lookAt(ballMesh.position.x + FWD.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + FWD.z * 6);
   }
 
   renderer.render(scene, camera);
 }
-animate();
+
+var clock;
+
+var SUPABASE_URL = "https://bgoolrrjbagrifonwfgw.supabase.co";
+var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
+
+(async function boot() {
+  var courseId = new URLSearchParams(location.search).get("course");
+  if (courseId) {
+    try {
+      var res = await fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + encodeURIComponent(courseId) + "&select=*", {
+        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
+      });
+      var rows = await res.json();
+      if (rows && rows[0]) {
+        buildTileHole(rows[0]);
+        document.title = "Swing Lab — " + (rows[0].name || "Course");
+      } else {
+        buildDefaultHole();
+      }
+    } catch (e) {
+      buildDefaultHole();
+    }
+  } else {
+    buildDefaultHole();
+  }
+  startGameplay();
+})();
 </script>
