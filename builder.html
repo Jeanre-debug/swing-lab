@@ -467,45 +467,88 @@
   els.visPublic.addEventListener("click", function () { isPublic = true; els.visPublic.classList.add("active"); els.visPrivate.classList.remove("active"); });
 
   // ---- Paint ----
+  // Tee/pin are single-point markers, so dragging just follows the cursor like before. Every
+  // other tool now fills a rectangle: drag from corner to corner (previewed live) and the whole
+  // area commits on release — a single click (no real drag) degenerates to the old one-cell
+  // paint, since a rect from a cell to itself is just that cell.
   var painting = false;
-  var lastCell = null;
+  var dragStartCell = null;
+  var dragCurrentCell = null;
 
   function cellFromEvent(e) {
     var rect = canvas.getBoundingClientRect();
     var x = Math.floor((e.clientX - rect.left) / CELL_PX);
     var y = Math.floor((e.clientY - rect.top) / CELL_PX);
-    if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return null;
-    return { x: x, y: y };
+    return { x: clampInt(x, 0, COLS - 1), y: clampInt(y, 0, ROWS - 1) };
   }
+  function clampInt(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-  function paintAt(cell) {
+  function placeMarker(cell) {
     var h = currentHole();
-    if (activeTool === "tee") { h.tee = cell; }
-    else if (activeTool === "pin") { h.pin = cell; }
-    else { h.tiles[cell.y][cell.x] = activeTool; }
+    if (activeTool === "tee") h.tee = cell;
+    else if (activeTool === "pin") h.pin = cell;
     draw();
     updateStats();
   }
 
+  function fillRect(a, b, type) {
+    var h = currentHole();
+    var x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+    var y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    for (var y = y0; y <= y1; y++) {
+      for (var x = x0; x <= x1; x++) h.tiles[y][x] = type;
+    }
+  }
+
+  function drawDragPreview() {
+    if (!painting || !dragStartCell || !dragCurrentCell || activeTool === "tee" || activeTool === "pin") return;
+    var x0 = Math.min(dragStartCell.x, dragCurrentCell.x), x1 = Math.max(dragStartCell.x, dragCurrentCell.x);
+    var y0 = Math.min(dragStartCell.y, dragCurrentCell.y), y1 = Math.max(dragStartCell.y, dragCurrentCell.y);
+    ctx.fillStyle = TYPE_COLOR[activeTool] || TYPE_COLOR.rough;
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(x0 * CELL_PX, y0 * CELL_PX, (x1 - x0 + 1) * CELL_PX, (y1 - y0 + 1) * CELL_PX);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#eef2ea";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x0 * CELL_PX + 1, y0 * CELL_PX + 1, (x1 - x0 + 1) * CELL_PX - 2, (y1 - y0 + 1) * CELL_PX - 2);
+  }
+
   canvas.addEventListener("pointerdown", function (e) {
     var cell = cellFromEvent(e);
-    if (!cell) return;
-    painting = true;
-    lastCell = null;
     canvas.setPointerCapture(e.pointerId);
-    paintAt(cell);
-    lastCell = cell;
+    painting = true;
+    if (activeTool === "tee" || activeTool === "pin") {
+      placeMarker(cell);
+      return;
+    }
+    dragStartCell = cell;
+    dragCurrentCell = cell;
+    draw();
+    drawDragPreview();
   });
   canvas.addEventListener("pointermove", function (e) {
     if (!painting) return;
     var cell = cellFromEvent(e);
-    if (!cell) return;
-    if (lastCell && lastCell.x === cell.x && lastCell.y === cell.y) return;
-    paintAt(cell);
-    lastCell = cell;
+    if (activeTool === "tee" || activeTool === "pin") {
+      placeMarker(cell);
+      return;
+    }
+    if (dragCurrentCell && dragCurrentCell.x === cell.x && dragCurrentCell.y === cell.y) return;
+    dragCurrentCell = cell;
+    draw();
+    drawDragPreview();
   });
   ["pointerup", "pointercancel", "pointerleave"].forEach(function (evt) {
-    canvas.addEventListener(evt, function () { painting = false; });
+    canvas.addEventListener(evt, function () {
+      if (painting && dragStartCell && dragCurrentCell && activeTool !== "tee" && activeTool !== "pin") {
+        fillRect(dragStartCell, dragCurrentCell, activeTool);
+        updateStats();
+      }
+      painting = false;
+      dragStartCell = null;
+      dragCurrentCell = null;
+      draw();
+    });
   });
 
   // ---- New ----

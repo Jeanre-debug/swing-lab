@@ -484,7 +484,9 @@ function tileTypeAt(worldX, worldZ) {
     var cols = currentTileMeta.cols, rows = currentTileMeta.rows, ts = currentTileMeta.tileSize;
     var tx = Math.round(worldX / ts + cols / 2);
     var ty = Math.round(-worldZ / ts);
-    if (ty < 0 || ty >= rows || tx < 0 || tx >= cols) return "rough";
+    // Past the edge of whatever the course actually paints, there's no course here at all —
+    // that's out of bounds by definition, not an implicit stretch of rough.
+    if (ty < 0 || ty >= rows || tx < 0 || tx >= cols) return "ob";
     return currentTileGrid[ty][tx] || "rough";
   }
   if (Math.hypot(worldX - HOLE_POS.x, worldZ - HOLE_POS.z) < 9) return "green";
@@ -675,13 +677,35 @@ function buildTileHole(course) {
   currentTileGrid = grid;
   currentTileMeta = { cols: cols, rows: rows, tileSize: tileSize };
 
+  // A shot that clears the painted grid entirely used to fly out over bare void — no ground
+  // mesh existed past the last tile at all. tileTypeAt already treats anything out there as OB
+  // (see above); this just gives it somewhere to actually land, styled like plain rough so it
+  // reads as "you've wandered off the course," not a special-looking hazard band.
+  var margin = tileSize * 20;
+  var bgWidth = cols * tileSize + margin * 2, bgDepth = rows * tileSize + margin * 2;
+  var bgCenter = worldFromTile((cols - 1) / 2, (rows - 1) / 2);
+  var background = new THREE.Mesh(
+    new THREE.PlaneGeometry(bgWidth, bgDepth),
+    new THREE.MeshStandardMaterial({ color: TILE_STYLE.rough.color, flatShading: true, roughness: 1 })
+  );
+  background.rotation.x = -Math.PI / 2;
+  // Well below every tile box's underside (the lowest, water, bottoms out around -0.15) so it
+  // never pokes through/z-fights with the actual grid — it only ever shows in the margin.
+  background.position.set(bgCenter.x, -0.3, bgCenter.z);
+  background.receiveShadow = true;
+  holeGroup.add(background);
+
   var byType = {};
   var treeCells = [];
   for (var ty = 0; ty < rows; ty++) {
     for (var tx = 0; tx < cols; tx++) {
       var type = grid[ty][tx];
       var w = worldFromTile(tx, ty);
-      (byType[type] || (byType[type] = [])).push(w);
+      // OB is a gameplay-only marker (see tileTypeAt/TERRAIN_SPEED_MULT) — invisible during
+      // play, so it renders exactly like rough here. Still fully visible in the builder itself,
+      // which reads this same tile data directly rather than through this rendering grouping.
+      var visualType = type === "ob" ? "rough" : type;
+      (byType[visualType] || (byType[visualType] = [])).push(w);
       if (type === "tree") treeCells.push(w);
     }
   }
@@ -1106,7 +1130,9 @@ var mmBg = document.createElement("canvas");
 mmBg.width = MM_W; mmBg.height = MM_H;
 var mmBgCtx = mmBg.getContext("2d");
 var mmScale = 1, mmOffX = 0, mmOffZ = 0;
-var MM_TYPE_COLOR = { rough: "#4f9d5c", fairway: "#74c47a", green: "#8ed685", bunker: "#eecb8c", water: "#2fb8cf", tree: "#3d8a4d", ob: "#a89c8c" };
+// OB deliberately has no entry — invisible during play, so it falls back to reading as rough
+// on the minimap too, same as the 3D terrain itself.
+var MM_TYPE_COLOR = { rough: "#4f9d5c", fairway: "#74c47a", green: "#8ed685", bunker: "#eecb8c", water: "#2fb8cf", tree: "#3d8a4d" };
 
 function worldToMM(x, z) {
   return { x: mmOffX + x * mmScale, y: mmOffZ + z * mmScale };
