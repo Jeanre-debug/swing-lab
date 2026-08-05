@@ -290,7 +290,7 @@
       <div class="difficulty-tag" id="difficultyTag"></div>
     </div>
 
-    <a class="panel builder-link" href="builder.html" target="_blank" rel="noopener">Course Builder &rarr;</a>
+    <a class="panel builder-link" href="builder.html" id="builderLink">Course Builder &rarr;</a>
 
     <div class="panel players-panel hidden" id="playersPanel">
       <div class="eyebrow">Players</div>
@@ -1700,6 +1700,18 @@ function connect() {
 }
 els.connectBtn.addEventListener("click", connect);
 document.getElementById("reset").addEventListener("click", resetBall);
+
+// Same-tab navigation (not a new tab) — but leaving mid-round drops every connected phone's
+// game, so that specific case gets a confirmation first. Also carries the currently loaded
+// course's id along, so the builder opens straight into editing this exact course rather than
+// a blank one.
+document.getElementById("builderLink").addEventListener("click", function (e) {
+  if (roundStarted && !confirm("Leave this round to open the Course Builder? Everyone's progress will be lost.")) {
+    e.preventDefault();
+    return;
+  }
+  if (loadedCourseId) e.currentTarget.href = "builder.html?course=" + loadedCourseId;
+});
 
 document.getElementById("startRoundBtn").addEventListener("click", function () {
   if (!roster.length) return;
