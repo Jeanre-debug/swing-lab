@@ -787,19 +787,30 @@
   // low loft (closer to the 45 degree ideal range angle) — the opposite of reality. Real
   // clubs also swing slower as loft increases (shorter shaft, shorter/partial swings), which
   // is what actually keeps a driver the longest club — speedMult stands in for that.
+  // avgDistance is the real average-carry target course.html's speedMult values were reverse-
+  // engineered from (see course.html's BASE_MIN_SPEED/BASE_MAX_SPEED comment) — shown here too
+  // so picking a club tells you what it's actually for, not just its loft.
   var CLUBS = [
-    { id: "driver", name: "Driver", loft: 10.5, speedMult: 1.00 },
-    { id: "3w", name: "3 Wood", loft: 15, speedMult: 0.80 },
-    { id: "5w", name: "5 Wood", loft: 18, speedMult: 0.71 },
-    { id: "4i", name: "4 Iron", loft: 21, speedMult: 0.65 },
-    { id: "5i", name: "5 Iron", loft: 24, speedMult: 0.60 },
-    { id: "6i", name: "6 Iron", loft: 27, speedMult: 0.55 },
-    { id: "7i", name: "7 Iron", loft: 31, speedMult: 0.51 },
-    { id: "8i", name: "8 Iron", loft: 35, speedMult: 0.48 },
-    { id: "9i", name: "9 Iron", loft: 39, speedMult: 0.45 },
-    { id: "pw", name: "Pitching Wedge", loft: 44, speedMult: 0.41 },
-    { id: "sw", name: "Sand Wedge", loft: 56, speedMult: 0.37 },
-    { id: "lw", name: "Lob Wedge", loft: 60, speedMult: 0.33 }
+    { id: "driver", name: "Driver", loft: 10.5, speedMult: 1.00, avgDistance: 210 },
+    { id: "3w", name: "3 Wood", loft: 15, speedMult: 0.80, avgDistance: 190 },
+    { id: "5w", name: "5 Wood", loft: 18, speedMult: 0.71, avgDistance: 175 },
+    { id: "4i", name: "4 Iron", loft: 21, speedMult: 0.65, avgDistance: 165 },
+    { id: "5i", name: "5 Iron", loft: 24, speedMult: 0.60, avgDistance: 155 },
+    { id: "6i", name: "6 Iron", loft: 27, speedMult: 0.55, avgDistance: 145 },
+    { id: "7i", name: "7 Iron", loft: 31, speedMult: 0.51, avgDistance: 135 },
+    { id: "8i", name: "8 Iron", loft: 35, speedMult: 0.48, avgDistance: 125 },
+    { id: "9i", name: "9 Iron", loft: 39, speedMult: 0.45, avgDistance: 115 },
+    { id: "pw", name: "Pitching Wedge", loft: 44, speedMult: 0.41, avgDistance: 100 },
+    { id: "sw", name: "Sand Wedge", loft: 56, speedMult: 0.37, avgDistance: 75 },
+    { id: "lw", name: "Lob Wedge", loft: 60, speedMult: 0.33, avgDistance: 55 },
+    // Putters are swung far slower than any full-swing club (a short, controlled stroke, not a
+    // backswing/downswing arc) — speedMult breaks the loft-correlation pattern above on purpose.
+    // Its near-zero loft is what keeps the ball rolling instead of flying, reusing the exact
+    // same physics as every other club rather than needing a separate "putting mode." Both
+    // speedMult and avgDistance here are unverified starting guesses, same as everything else
+    // in this project before a real test — putt distance is also inherently a target you choose
+    // per shot, not a fixed full-effort distance like the other clubs.
+    { id: "putter", name: "Putter", loft: 3, speedMult: 0.05, avgDistance: 3 }
   ];
   var ROW_H = 40;
   var selectedClubIndex = 0;
@@ -812,11 +823,15 @@
   var topPad = document.createElement("div");
   topPad.className = "picker-pad";
   pk.wheel.appendChild(topPad);
+  function clubInfoText(club) {
+    return club.loft.toFixed(1) + "&deg; &middot; ~" + club.avgDistance + "m";
+  }
+
   CLUBS.forEach(function (club, i) {
     var item = document.createElement("div");
     item.className = "picker-item";
     item.dataset.index = i;
-    item.innerHTML = '<span class="n">' + club.name + '</span><span class="l">' + club.loft.toFixed(1) + '&deg;</span>';
+    item.innerHTML = '<span class="n">' + club.name + '</span><span class="l">' + clubInfoText(club) + '</span>';
     item.addEventListener("click", function () { scrollToClubIndex(i, true); });
     pk.wheel.appendChild(item);
   });
@@ -870,7 +885,7 @@
     selectedClubIndex = clamp(i, 0, CLUBS.length - 1);
     var club = CLUBS[selectedClubIndex];
     pk.pillName.textContent = club.name;
-    pk.pillLoft.textContent = club.loft.toFixed(1) + "°";
+    pk.pillLoft.innerHTML = clubInfoText(club);
   }
 
   pk.pill.addEventListener("click", function () {
