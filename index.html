@@ -500,6 +500,33 @@
   }
   .debug-grid div span { color: var(--muted-dim); }
 
+  .dbg-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .dbg-entry {
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  .dbg-entry.dbg-ok { border-color: color-mix(in srgb, var(--turf) 45%, var(--line)); }
+  .dbg-entry.dbg-bad { border-color: color-mix(in srgb, var(--flag) 45%, var(--line)); }
+  .dbg-head {
+    font-family: var(--sans);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--paper);
+    margin-bottom: 4px;
+  }
+  .dbg-row { color: var(--muted); }
+  .dbg-row.dbg-muted { color: var(--muted-dim); font-size: 10px; margin-top: 2px; }
+  .dbg-pass { color: var(--turf); }
+  .dbg-fail { color: var(--flag); font-weight: 700; }
+
   footer {
     text-align: center;
     font-size: 11px;
@@ -614,6 +641,13 @@
       <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
       <div><span>roll rate</span> <span id="dbgRot">–</span></div>
       <div><span>sample hz</span> <span id="dbgHz">–</span></div>
+    </div>
+  </details>
+
+  <details class="debug panel" open>
+    <summary>Swing Debug Log</summary>
+    <div class="dbg-list" id="debugLogList">
+      <div class="history-empty">No swing attempts yet.</div>
     </div>
   </details>
 
@@ -895,6 +929,15 @@
   var sampleTimes = [];
   var lastRaw = { ax: 0, ay: 0, az: 0, yaw: 0, roll: 0 };
 
+  // Per-attempt diagnostics — reset at swingStart, read out into a debugLog entry whether the
+  // attempt finalizes into a real swing or stalls out with no impact ever detected. Stalls
+  // previously left zero trace: the UI just silently reset to armed with no record of why.
+  var attemptSampleCount = 0;
+  var attemptMaxGapMs = 0;
+  var attemptRearmCount = 0;
+  var attemptLastT = null;
+  var debugLog = [];
+
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
   function setPhase(text, cls) {
@@ -1014,6 +1057,69 @@
     return severe ? "SLICE" : "FADE";
   }
 
+  // Records the actual numbers behind every pass/fail check for this attempt, whether it
+  // finalized into a real swing or stalled with no impact ever detected — stalls previously
+  // left zero trace, which made "sometimes it just doesn't hit the ball" impossible to debug.
+  function logDebugEntry(outcome, t, extra) {
+    var gate = armThreshold * IMPACT_GATE_MULTIPLIER;
+    var totalDur = t - swingStart.t;
+    var riseDur = swingPeak.t - riseStartT;
+    var sincePeak = t - swingPeak.t;
+    var elapsedSec = Math.max(totalDur, 1) / 1000;
+    debugLog.unshift({
+      time: t,
+      outcome: outcome,
+      peak: swingPeak.net,
+      gate: gate,
+      gatePass: swingPeak.net > gate,
+      totalDur: totalDur,
+      minSwingMs: MIN_SWING_MS,
+      minSwingPass: totalDur > MIN_SWING_MS,
+      riseDur: riseDur,
+      riseMaxMs: RISE_MAX_MS,
+      risePass: riseDur < RISE_MAX_MS,
+      sincePeak: sincePeak,
+      sincePeakPass: sincePeak < 500,
+      fallCount: fallCount,
+      fallPass: fallCount >= 3,
+      sampleCount: attemptSampleCount,
+      avgHz: Math.round(attemptSampleCount / elapsedSec),
+      maxGapMs: Math.round(attemptMaxGapMs),
+      rearmCount: attemptRearmCount,
+      baseline: baseline,
+      noiseStd: noiseStd,
+      armThreshold: armThreshold,
+      extra: extra
+    });
+    debugLog = debugLog.slice(0, 8);
+    renderDebugLog();
+  }
+
+  function renderDebugLog() {
+    var el = $("debugLogList");
+    if (!el) return;
+    if (!debugLog.length) {
+      el.innerHTML = '<div class="history-empty">No swing attempts yet.</div>';
+      return;
+    }
+    el.innerHTML = debugLog.map(function (e) {
+      function chk(pass, label) { return '<span class="' + (pass ? "dbg-pass" : "dbg-fail") + '">' + (pass ? "✓" : "✗") + " " + label + '</span>'; }
+      var head = e.outcome === "SWING"
+        ? "SWING — " + (e.extra ? e.extra.shotName + " · PWR " + e.extra.power : "")
+        : "STALLED — no impact in 2.5s";
+      return '<div class="dbg-entry ' + (e.outcome === "SWING" ? "dbg-ok" : "dbg-bad") + '">' +
+        '<div class="dbg-head">' + head + '</div>' +
+        '<div class="dbg-row">' + chk(e.gatePass, "peak " + e.peak.toFixed(2) + " / gate " + e.gate.toFixed(2)) + '</div>' +
+        '<div class="dbg-row">' + chk(e.risePass, "rise " + Math.round(e.riseDur) + "ms / max " + e.riseMaxMs + "ms") + '</div>' +
+        '<div class="dbg-row">' + chk(e.minSwingPass, "duration " + Math.round(e.totalDur) + "ms / min " + e.minSwingMs + "ms") + '</div>' +
+        '<div class="dbg-row">' + chk(e.fallPass, "fallCount " + e.fallCount + " (need ≥3)") + '</div>' +
+        '<div class="dbg-row">' + chk(e.sincePeakPass, "since peak " + Math.round(e.sincePeak) + "ms (need <500ms)") + '</div>' +
+        '<div class="dbg-row dbg-muted">samples ' + e.sampleCount + " · " + e.avgHz + "Hz avg · max gap " + e.maxGapMs + "ms · re-arms " + e.rearmCount + '</div>' +
+        '<div class="dbg-row dbg-muted">baseline ' + e.baseline.toFixed(2) + " · noise σ " + e.noiseStd.toFixed(3) + " · armThreshold " + e.armThreshold.toFixed(2) + '</div>' +
+        '</div>';
+    }).join("");
+  }
+
   function finalizeSwing(nowT) {
     var peakT = swingPeak.t;
     // Look back well before the threshold-crossing sample (swingStart) — that crossing
@@ -1057,6 +1163,8 @@
     var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "STRAIGHT";
     var faceLabel = faceVal > FACE_EPS ? "CLOSED" : faceVal < -FACE_EPS ? "OPEN" : "SQUARE";
     var shotName = classifyShot(pathVal, faceVal);
+
+    logDebugEntry("SWING", nowT, { power: power, shotName: shotName });
 
     els.power.innerHTML = power + '<span class="unit">/100</span>';
     els.power.classList.add("impact");
@@ -1105,9 +1213,17 @@
         swingPeak = { t: t, net: net };
         riseStartT = t;
         fallCount = 0;
+        attemptSampleCount = 0;
+        attemptMaxGapMs = 0;
+        attemptRearmCount = 0;
+        attemptLastT = t;
         setPhase("BACKSWING", "hot");
       }
     } else if (state === "swinging") {
+      attemptSampleCount++;
+      if (attemptLastT !== null) attemptMaxGapMs = Math.max(attemptMaxGapMs, t - attemptLastT);
+      attemptLastT = t;
+
       if (net > swingPeak.net) {
         swingPeak = { t: t, net: net };
         fallCount = 0;
@@ -1124,12 +1240,14 @@
         swingPeak = { t: t, net: net };
         fallCount = 0;
         riseStartT = t;
+        attemptRearmCount++;
       }
 
       var stalled = t - swingStart.t > 2500;
       if (stalled) {
+        logDebugEntry("STALLED", t, null);
         state = "ready";
-        setPhase("ARMED — SWING", "armed");
+        setPhase("NO IMPACT — CHECK LOG", "armed");
       } else if (fallCount >= 3 && (t - swingPeak.t) < 500 && swingPeak.net > armThreshold * IMPACT_GATE_MULTIPLIER
                  && (t - swingStart.t) > MIN_SWING_MS
                  && (swingPeak.t - riseStartT) < RISE_MAX_MS) {
