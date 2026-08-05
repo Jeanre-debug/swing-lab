@@ -437,18 +437,21 @@
   var FACE_SIGN = -1;
   var WINDOW_MS = 3000;
   var RESULT_HOLD_MS = 1100;
+  // How far back before impact path/face rotation gets integrated from. A real backswing
+  // opens the face something like 90° before the downswing closes it back down — that's
+  // normal technique, not a flaw — so this has to reach back past address, not just start
+  // at the threshold-crossing (which is already mid-downswing), or the backswing's opening
+  // motion gets missed and what's left isn't a true "face at impact" reading.
+  var ROTATION_LOOKBACK_MS = 1800;
 
   var state = "idle"; // idle | calibrating | ready | swinging | result
-  var buffer = []; // {t, net}
+  var buffer = []; // {t, net, roll, yaw}
   var baseline = 0, noiseStd = 0, armThreshold = 2;
   var calibSamples = [];
   var calibStart = 0;
   var swingStart = null; // {t, idx}
   var swingPeak = null; // {t, net}
   var fallCount = 0;
-  var pathAccum = 0;
-  var faceAccum = 0;
-  var lastSampleT = null;
   var lastNet = 0;
   var resultUntil = 0;
   var history = [];
@@ -525,8 +528,11 @@
     var peakT = swingPeak.t;
     // Look back well before the threshold-crossing sample (swingStart) — that crossing
     // is usually already near the top-of-backswing dip, not the true start of motion,
-    // so searching only after it collapses backswing duration to ~0 every time.
-    var lookbackStart = peakT - 1000;
+    // so searching only after it collapses backswing duration to ~0 every time. The same
+    // widened window doubles as the integration range for path/face rotation below, so a
+    // full backswing-open + downswing-close cycle nets out correctly (see
+    // ROTATION_LOOKBACK_MS above for why this can't just start at swingStart either).
+    var lookbackStart = peakT - ROTATION_LOOKBACK_MS;
     var windowSamples = buffer.filter(function (s) { return s.t <= peakT && s.t >= lookbackStart; });
     if (!windowSamples.length) windowSamples = [swingStart];
     var winStart = windowSamples[0];
@@ -536,9 +542,18 @@
     var downswingDur = peakT - transition.t;
     var tempoRatio = (backswingDur > 40 && downswingDur > 40) ? clamp(backswingDur / downswingDur, 0.3, 9.9) : null;
 
+    // Net rotation across the whole window (address-ish through impact), not just the
+    // downswing sliver — a rectangle-rule integral of each sample's rate over its dt.
+    var pathTotal = 0, faceTotal = 0;
+    for (var k = 1; k < windowSamples.length; k++) {
+      var dt = (windowSamples[k].t - windowSamples[k - 1].t) / 1000;
+      pathTotal += windowSamples[k].yaw * dt;
+      faceTotal += windowSamples[k].roll * dt;
+    }
+
     var power = clamp(Math.round((swingPeak.net / POWER_SCALE) * 100), 1, 100);
-    var pathVal = PATH_SIGN * pathAccum;
-    var faceVal = FACE_SIGN * faceAccum;
+    var pathVal = PATH_SIGN * pathTotal;
+    var faceVal = FACE_SIGN * faceTotal;
     var pathLabel = pathVal > PATH_EPS ? "OUT→IN" : pathVal < -PATH_EPS ? "IN→OUT" : "STRAIGHT";
     var faceLabel = faceVal > FACE_EPS ? "CLOSED" : faceVal < -FACE_EPS ? "OPEN" : "SQUARE";
     var shotName = classifyShot(pathVal, faceVal);
@@ -569,7 +584,7 @@
   }
 
   function handleSample(net, yawRate, rollRate, t) {
-    buffer.push({ t: t, net: net });
+    buffer.push({ t: t, net: net, roll: rollRate, yaw: yawRate });
     var cutoff = t - WINDOW_MS;
     while (buffer.length && buffer[0].t < cutoff) buffer.shift();
 
@@ -579,15 +594,9 @@
         swingStart = { t: t, idx: buffer.length - 1 };
         swingPeak = { t: t, net: net };
         fallCount = 0;
-        pathAccum = 0;
-        faceAccum = 0;
         setPhase("BACKSWING", "hot");
       }
     } else if (state === "swinging") {
-      var dt = lastSampleT ? (t - lastSampleT) / 1000 : 1 / 60;
-      pathAccum += yawRate * dt;
-      faceAccum += rollRate * dt;
-
       if (net > swingPeak.net) {
         swingPeak = { t: t, net: net };
         fallCount = 0;
@@ -612,7 +621,6 @@
       }
     }
 
-    lastSampleT = t;
     lastNet = net;
   }
 
