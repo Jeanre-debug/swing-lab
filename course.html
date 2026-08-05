@@ -751,14 +751,21 @@ function startGameplay() {
   ballBody = new CANNON.Body({
     mass: 0.045,
     shape: new CANNON.Sphere(BALL_RADIUS),
-    linearDamping: 0.32,
-    angularDamping: 0.5
+    linearDamping: 0.18,
+    angularDamping: 0.4
   });
   world.addBody(ballBody);
 
+  // Re-derived from an actual cannon-es simulation (not hand-derived math) after every club
+  // was found to land at roughly HALF its labeled avgDistance, even at full power on fairway —
+  // 0.45 ground friction was robbing most of a shot's speed on its very first bounce,
+  // especially for steep-descending short irons/wedges. Checked against all 12 clubs at full
+  // power; still not perfectly uniform (driver runs a bit hot, wedges a bit short) since one
+  // global friction/damping pair can't fully equalize every loft, but it's far closer than
+  // before across the board.
   var contact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
-    friction: 0.45,
-    restitution: 0.35
+    friction: 0.15,
+    restitution: 0.25
   });
   world.addContactMaterial(contact);
 
@@ -879,10 +886,12 @@ function drawMinimapFrame() {
 
 // ---- Shot application ----
 var DEG2RAD = Math.PI / 180;
-// Ball-speed range at full power for a driver (loft 10.5, speedMult 1.0) — picked by working
-// backwards from real average driver carry (~210m) through plain no-drag projectile range
-// (V^2 sin(2θ)/g), which also lands PGA-average-ish driver ball speed (~75 m/s) for free.
-var BASE_MIN_SPEED = 25, BASE_MAX_SPEED = 76;
+// Full-power speed range across all clubs. Originally picked from a no-drag projectile
+// formula, which ignores that a real shot here also loses speed to linearDamping in the air
+// and friction/restitution on landing — running the actual cannon-es simulation showed every
+// club was landing at roughly HALF its labeled avgDistance as a result. Re-tuned alongside the
+// ContactMaterial below against a real simulation of all 12 clubs at full power.
+var BASE_MIN_SPEED = 25, BASE_MAX_SPEED = 88;
 var DEFAULT_LOFT = 10.5, DEFAULT_SPEED_MULT = 1.0;
 // pathVal/faceVal are accumulated-degree sensor proxies, not calibrated real angles —
 // these scale factors are a rough game-feel guess, tune once real swings are visible.
@@ -1236,8 +1245,8 @@ function launchShot(shot) {
   // (there's no per-tile terrain friction yet, just this per-shot approximation). Tuned to land
   // roughly in the 30m-at-full-power range described as the target; unverified against a real
   // putt like every other constant here.
-  ballBody.linearDamping = shot.club === "putter" ? 0.045 : 0.32;
-  ballBody.angularDamping = shot.club === "putter" ? 0.15 : 0.5;
+  ballBody.linearDamping = shot.club === "putter" ? 0.045 : 0.18;
+  ballBody.angularDamping = shot.club === "putter" ? 0.15 : 0.4;
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
