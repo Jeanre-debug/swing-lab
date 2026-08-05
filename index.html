@@ -942,15 +942,17 @@
   var SEVERE_CURVE_EPS = FACE_EPS * 2.5;
   // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
   // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
-  // in-to-out vs out-to-in. Both signs below were only ever verified against the OLD path/face
-  // computation (real-time gravity projection for path, raw gamma integral for face) — now
-  // that both come from quaternion swing-twist decomposition instead, these need a fresh real
-  // test swing to confirm. Path's underlying physics didn't change (still "rotation about the
-  // fixed world-vertical axis," just computed via one consistent mechanism instead of a
-  // separate live-projection scheme), so 1 is a reasonable starting guess; face's computation
-  // changed for real (that was the actual bug being fixed), so treat its sign as fully unverified.
+  // in-to-out vs out-to-in. FACE_SIGN was left unverified after the quaternion rewrite (that
+  // computation genuinely changed, unlike path's) and every debug-log screenshot since has
+  // shown almost exclusively severe HOOK -- a strongly closed face on nearly every single
+  // swing, which isn't plausible as real consistent technique but is exactly what a backwards
+  // face sign produces. Flipped to -1 on that evidence. Path's underlying physics didn't
+  // change in that rewrite (still "rotation about the fixed world-vertical axis," just
+  // computed via one consistent mechanism instead of a separate live-projection scheme), and
+  // in-to-out is a normal path for plenty of golfers, not the kind of implausible pattern that
+  // flagged face — so it's left alone.
   var PATH_SIGN = 1;
-  var FACE_SIGN = 1;
+  var FACE_SIGN = -1;
   var WINDOW_MS = 3000;
   var RESULT_HOLD_MS = 1100;
   // How far back before impact path/face rotation gets integrated from. A real backswing
