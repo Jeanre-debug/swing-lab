@@ -856,6 +856,13 @@ function launchShot(shot) {
   ballBody.velocity.set(0, 0, 0);
   ballBody.angularVelocity.set(0, 0, 0);
   ballBody.wakeUp();
+  // Greens are mown short specifically to roll fast — a putt should travel much farther than a
+  // full-swing chip at the same speed, which the shared fairway/rough damping doesn't capture
+  // (there's no per-tile terrain friction yet, just this per-shot approximation). Tuned to land
+  // roughly in the 30m-at-full-power range described as the target; unverified against a real
+  // putt like every other constant here.
+  ballBody.linearDamping = shot.club === "putter" ? 0.045 : 0.32;
+  ballBody.angularDamping = shot.club === "putter" ? 0.15 : 0.5;
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
