@@ -1295,10 +1295,16 @@
       }
 
       // A real pause at the top of the backswing returns to near address-stillness before the
-      // downswing starts — a much more direct signal than any peak-magnitude ratio. Whenever
-      // that happens before we've reached real downswing scale, re-arm tracking from here so
-      // the stale backswing-hump peak/fall-count can't carry into the impact check below.
-      if (net < noiseStd * QUIET_MULTIPLIER && swingPeak.net < armThreshold * IMPACT_GATE_MULTIPLIER) {
+      // downswing starts — a much more direct signal than any peak-magnitude ratio. This used
+      // to only re-arm if swingPeak hadn't already cleared the gate, on the assumption that
+      // clearing the gate meant real downswing scale had been reached. Real debug-log data
+      // disproved that: for a light bare phone, the sharp direction-reversal jerk AT the top of
+      // the backswing can itself clear the gate (by ~1.3-2x, well under the 4x dominance
+      // bypass) — meaning the one attempt that most needs re-arming is exactly the one where
+      // this condition disabled it, letting that transition spike get treated as the real peak
+      // for the rest of the swing. A genuine return to address-stillness is real evidence of a
+      // pause regardless of how big the peak-so-far was, so the gate check is gone.
+      if (net < noiseStd * QUIET_MULTIPLIER) {
         swingPeak = { t: t, net: net };
         fallCount = 0;
         riseStartT = t;
