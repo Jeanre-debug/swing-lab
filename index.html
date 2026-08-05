@@ -59,6 +59,24 @@
     text-wrap: balance;
   }
 
+  .header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .builder-link {
+    flex-shrink: 0;
+    appearance: none;
+    text-decoration: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 8px 12px;
+    border-radius: 999px;
+    margin-top: 2px;
+  }
+  .builder-link:focus-visible { outline: 2px solid var(--sand); }
+
   .warning {
     display: none;
     background: color-mix(in srgb, var(--flag) 16%, var(--panel));
@@ -491,9 +509,12 @@
 </style>
 
 <div class="console">
-  <div>
-    <div class="eyebrow">Phase 0 · Sensor Feasibility Spike</div>
-    <h1>Swing Lab</h1>
+  <div class="header-row">
+    <div>
+      <div class="eyebrow">Phase 0 · Sensor Feasibility Spike</div>
+      <h1>Swing Lab</h1>
+    </div>
+    <a class="builder-link" href="builder.html">Course Builder</a>
   </div>
 
   <div class="warning" id="warning"></div>

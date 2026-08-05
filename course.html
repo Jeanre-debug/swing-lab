@@ -170,7 +170,7 @@
 
     <div class="panel minimap-panel">
       <div class="minimap-head">
-        <span class="eyebrow">Hole</span>
+        <span class="eyebrow">Hole · Par <span id="holePar">4</span></span>
         <span class="minimap-length" id="holeLength">–<span class="unit">m</span></span>
       </div>
       <canvas id="minimap" width="168" height="230"></canvas>
@@ -833,6 +833,7 @@ var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
         loadedCourse = rows[0];
         buildTileHole(loadedCourse);
         document.title = "Swing Lab — " + (loadedCourse.name || "Course");
+        document.getElementById("holePar").textContent = loadedCourse.par || 4;
       } else {
         buildDefaultHole();
       }
