@@ -756,7 +756,7 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 // go dead straight at the pin. Camera stays anchored to the real hole bearing regardless —
 // only the launched ball's direction uses the aimed vectors.
 var aimOffsetDeg = 0;
-var AIM_STEP = 2, AIM_MAX = 45;
+var AIM_STEP = 2;
 
 function rotateBasis(deg) {
   var rad = deg * DEG2RAD;
@@ -797,13 +797,29 @@ function updateAimTrail() {
 }
 
 function setAim(deg) {
-  aimOffsetDeg = clamp(deg, -AIM_MAX, AIM_MAX);
+  // Full circle, not clamped to a narrow cone — wraps like a compass rather than hitting a
+  // hard stop, so spinning past +-180 just keeps going the same direction.
+  aimOffsetDeg = ((deg + 180) % 360 + 360) % 360 - 180;
   document.getElementById("aimVal").textContent = Math.round(aimOffsetDeg) + "°";
   drawMinimapFrame();
   updateAimTrail();
 }
-document.getElementById("aimLeft").addEventListener("click", function () { setAim(aimOffsetDeg - AIM_STEP); });
-document.getElementById("aimRight").addEventListener("click", function () { setAim(aimOffsetDeg + AIM_STEP); });
+
+// Hold-to-repeat on the on-screen buttons — a single click per 2 degrees would take 90+
+// clicks to turn the aim around; holding one down sweeps it continuously instead.
+function holdToRepeat(el, step) {
+  var interval = null;
+  function start() {
+    setAim(aimOffsetDeg + step);
+    interval = setInterval(function () { setAim(aimOffsetDeg + step); }, 60);
+  }
+  function stop() { clearInterval(interval); interval = null; }
+  el.addEventListener("pointerdown", start);
+  ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) { el.addEventListener(evt, stop); });
+}
+holdToRepeat(document.getElementById("aimLeft"), -AIM_STEP);
+holdToRepeat(document.getElementById("aimRight"), AIM_STEP);
+
 window.addEventListener("keydown", function (e) {
   if (e.key === "ArrowLeft") setAim(aimOffsetDeg - AIM_STEP);
   if (e.key === "ArrowRight") setAim(aimOffsetDeg + AIM_STEP);
