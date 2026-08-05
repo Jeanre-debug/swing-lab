@@ -521,6 +521,10 @@
   // No real backswing-plus-downswing is over this fast, no matter how magnitude tuning is
   // set — a hard time floor that doesn't depend on getting acceleration thresholds right.
   var MIN_SWING_MS = 450;
+  // Per-sample EMA rate for baseline drift correction (~60Hz sampling) — small enough that a
+  // real swing (a few hundred ms of large deviation) barely moves it, roughly a 10s time
+  // constant for tracking slow thermal drift while genuinely at rest.
+  var DRIFT_ADAPT_RATE = 0.0017;
   // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
   var PATH_EPS = 14;
   var FACE_EPS = 8;
@@ -786,6 +790,16 @@
     }
 
     var net = Math.abs(raw - baseline);
+
+    // MEMS accelerometer bias drifts as the phone warms up in the hand over a session, so a
+    // baseline fixed at calibration slowly stops matching reality — "quiet" stops reading as
+    // quiet, which quietly breaks the pause-detection and gate logic above. While armed and
+    // genuinely still, nudge the baseline toward the live reading (slow enough — ~10s time
+    // constant — that it can't absorb an actual swing, only track slow thermal drift).
+    if (state === "ready" && net < noiseStd * QUIET_MULTIPLIER) {
+      baseline += (raw - baseline) * DRIFT_ADAPT_RATE;
+    }
+
     handleSample(net, yawRate, rollRate, t);
   }
 
