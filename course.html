@@ -195,6 +195,25 @@
     backdrop-filter: blur(6px);
   }
   button#reset:focus-visible { outline: 2px solid var(--sand); }
+
+  .fast-forward-hint {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    padding: 9px 14px;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .fast-forward-hint kbd {
+    font-family: var(--mono);
+    background: color-mix(in srgb, var(--paper) 12%, transparent);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-right: 5px;
+  }
+  .fast-forward-hint.active { color: var(--sand); background: color-mix(in srgb, var(--sand) 14%, transparent); }
 </style>
 
 <div id="viewport"></div>
@@ -258,6 +277,7 @@
     <button class="aim-btn" id="aimLeft">&#8249;</button>
     <div class="aim-readout panel">AIM <span id="aimVal">0&deg;</span></div>
     <button class="aim-btn" id="aimRight">&#8250;</button>
+    <div class="fast-forward-hint panel" id="fastForwardHint"><kbd>Space</kbd>Hold to speed up shot</div>
     <button id="reset">Reset to Tee</button>
   </div>
 </div>
@@ -794,6 +814,8 @@ var START_ANGLE_SCALE = 0.5;
 var CURVE_SCALE = 0.05;
 var CURVE_ACCEL = 6; // m/s^2 of lateral drift per unit of normalized curve strength, while airborne
 
+var FAST_FORWARD_MULT = 4; // how much simulation time passes per second of holding space
+var fastForwardHeld = false;
 var flightCurveStrength = 0;
 var shotStartPos = null;
 var settled = true;
@@ -942,7 +964,17 @@ holdToRepeat(document.getElementById("aimRight"), AIM_STEP);
 window.addEventListener("keydown", function (e) {
   if (e.key === "ArrowLeft") setAim(aimOffsetDeg - AIM_STEP);
   if (e.key === "ArrowRight") setAim(aimOffsetDeg + AIM_STEP);
+  if (e.code === "Space") {
+    fastForwardHeld = true;
+    e.preventDefault(); // stop the page from scrolling on space
+  }
 });
+window.addEventListener("keyup", function (e) {
+  if (e.code === "Space") fastForwardHeld = false;
+});
+// Holding space through a browser tab switch (or anything else that eats the keyup) shouldn't
+// leave the shot stuck in fast-forward forever.
+window.addEventListener("blur", function () { fastForwardHeld = false; });
 
 function launchShot(shot) {
   var power = clamp(shot.power || 0, 1, 100);
@@ -1040,7 +1072,8 @@ var els = {
   powerFill: document.getElementById("powerFill"),
   powerNum: document.getElementById("powerNum"),
   powerState: document.getElementById("powerState"),
-  strokes: document.getElementById("strokes")
+  strokes: document.getElementById("strokes"),
+  fastForwardHint: document.getElementById("fastForwardHint")
 };
 
 var STORAGE_KEY = "swingLabServerUrl";
@@ -1135,15 +1168,24 @@ function animate() {
   requestAnimationFrame(animate);
   var dt = Math.min(clock.getDelta(), 1 / 30);
 
+  // Holding space fast-forwards a shot in flight/roll — only while the ball is actually moving,
+  // so it can't be used to skip aiming or otherwise mess with anything else on the page. This
+  // dilates simulation time rather than skipping frames, so the curve/roll math sees the same
+  // physics, just compressed — nothing about the shot's outcome changes, only how long it takes
+  // to watch.
+  var fastForward = fastForwardHeld && !settled;
+  els.fastForwardHint.classList.toggle("active", fastForward);
+  var simDt = fastForward ? dt * FAST_FORWARD_MULT : dt;
+
   if (!settled) {
     var airborne = ballBody.position.y > BALL_RADIUS + 0.05;
     if (airborne && flightCurveStrength !== 0) {
-      ballBody.velocity.x += shotRight.x * flightCurveStrength * CURVE_ACCEL * dt;
-      ballBody.velocity.z += shotRight.z * flightCurveStrength * CURVE_ACCEL * dt;
+      ballBody.velocity.x += shotRight.x * flightCurveStrength * CURVE_ACCEL * simDt;
+      ballBody.velocity.z += shotRight.z * flightCurveStrength * CURVE_ACCEL * simDt;
     }
   }
 
-  world.step(1 / 60, dt, 5);
+  world.step(1 / 60, simDt, fastForward ? 15 : 5);
 
   ballMesh.position.copy(ballBody.position);
   ballMesh.quaternion.copy(ballBody.quaternion);

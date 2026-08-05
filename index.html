@@ -1,4 +1,4 @@
-<title>Swing Lab — Phase 0 Sensor Spike</title>
+<title>Swing Lab</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 
 <style>
@@ -334,6 +334,47 @@
   .club-pill.toggle-on .club-name { color: var(--sand); }
   .club-pill:focus-visible { outline: 2px solid var(--sand); }
 
+  /* Mode / Hand / Ball Flight — three quick settings that don't need a full-width row each,
+     so they sit side by side as compact chips instead of stacking like the club selector. */
+  .toggle-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .mini-toggle {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--paper);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    padding: 9px 6px;
+    border-radius: 12px;
+  }
+  .mini-toggle .mini-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .mini-toggle .mini-val {
+    font-size: 12.5px;
+    font-weight: 700;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mini-toggle.toggle-on { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 16%, var(--panel-raised)); }
+  .mini-toggle.toggle-on .mini-val { color: var(--sand); }
+  .mini-toggle:focus-visible { outline: 2px solid var(--sand); }
+
   .picker-overlay {
     position: fixed;
     inset: 0;
@@ -490,6 +531,8 @@
     padding: 2px 0;
   }
   details.debug summary:focus-visible { outline: 2px solid var(--sand); }
+  .diagnostics .eyebrow { margin-bottom: 8px; }
+  .diagnostics details + details { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
   .debug-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -562,8 +605,8 @@
 
 <div class="console">
   <div>
-    <div class="eyebrow">Phase 0 · Sensor Feasibility Spike</div>
-    <h1>Swing Lab</h1>
+    <div class="eyebrow">Swing Lab</div>
+    <h1>Take a Swing</h1>
   </div>
 
   <div class="warning" id="warning"></div>
@@ -593,31 +636,6 @@
       <div class="swing-meter-track"><div class="swing-meter-fill" id="meterFill"></div></div>
     </div>
 
-    <div class="metrics-row">
-      <div class="metric">
-        <div class="label">Tempo</div>
-        <div class="val" id="tempo">&#8211;&#8211;</div>
-      </div>
-      <div class="metric">
-        <div class="label">Path</div>
-        <div class="val" id="path">&#8211;&#8211;</div>
-      </div>
-      <div class="metric">
-        <div class="label">Face</div>
-        <div class="val" id="face">&#8211;&#8211;</div>
-      </div>
-    </div>
-
-    <div class="scope-wrap">
-      <canvas id="scope"></canvas>
-    </div>
-
-    <div class="sensitivity">
-      <span class="label">Twitchy</span>
-      <input type="range" id="sens" min="3" max="14" step="0.5" value="6.5">
-      <span class="label">Firm</span>
-    </div>
-
     <div class="club-row">
       <span class="label">Club</span>
       <button class="club-pill" id="clubPill">
@@ -627,29 +645,51 @@
       </button>
     </div>
 
-    <div class="club-row">
-      <span class="label">Mode</span>
-      <button class="club-pill" id="practiceToggle">
-        <span class="club-name" id="practiceToggleLabel">Play</span>
+    <div class="toggle-grid">
+      <button class="mini-toggle" id="practiceToggle">
+        <span class="mini-label">Mode</span>
+        <span class="mini-val" id="practiceToggleLabel">Play</span>
       </button>
-    </div>
-
-    <div class="club-row">
-      <span class="label">Hand</span>
-      <button class="club-pill" id="handToggle">
-        <span class="club-name" id="handToggleLabel">Right</span>
+      <button class="mini-toggle" id="handToggle">
+        <span class="mini-label">Hand</span>
+        <span class="mini-val" id="handToggleLabel">Right</span>
       </button>
-    </div>
-
-    <div class="club-row">
-      <span class="label">Trajectory</span>
-      <button class="club-pill" id="trajToggle">
-        <span class="club-name" id="trajToggleLabel">Normal</span>
+      <button class="mini-toggle" id="trajToggle">
+        <span class="mini-label">Ball Flight</span>
+        <span class="mini-val" id="trajToggleLabel">Normal</span>
       </button>
     </div>
 
     <button id="action">Tap to Begin</button>
     <div class="hint" id="hint">Hold the phone like a club grip, then keep it still while it calibrates.</div>
+
+    <details class="debug">
+      <summary>Shot Metrics</summary>
+      <div class="metrics-row">
+        <div class="metric">
+          <div class="label">Tempo</div>
+          <div class="val" id="tempo">&#8211;&#8211;</div>
+        </div>
+        <div class="metric">
+          <div class="label">Path</div>
+          <div class="val" id="path">&#8211;&#8211;</div>
+        </div>
+        <div class="metric">
+          <div class="label">Face</div>
+          <div class="val" id="face">&#8211;&#8211;</div>
+        </div>
+      </div>
+
+      <div class="scope-wrap">
+        <canvas id="scope"></canvas>
+      </div>
+
+      <div class="sensitivity">
+        <span class="label">Twitchy</span>
+        <input type="range" id="sens" min="3" max="14" step="0.5" value="6.5">
+        <span class="label">Firm</span>
+      </div>
+    </details>
   </div>
 
   <div class="panel history">
@@ -662,27 +702,31 @@
     </div>
   </div>
 
-  <details class="debug panel">
-    <summary>Raw Sensor Data</summary>
-    <div class="debug-grid">
-      <div><span>baseline</span> <span id="dbgBaseline">–</span></div>
-      <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
-      <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
-      <div><span>net accel</span> <span id="dbgNet">–</span></div>
-      <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
-      <div><span>roll rate</span> <span id="dbgRot">–</span></div>
-      <div><span>sample hz</span> <span id="dbgHz">–</span></div>
-    </div>
-  </details>
+  <div class="panel diagnostics">
+    <div class="eyebrow">Diagnostics</div>
 
-  <details class="debug panel" open>
-    <summary>Swing Debug Log</summary>
-    <div class="dbg-list" id="debugLogList">
-      <div class="history-empty">No swing attempts yet.</div>
-    </div>
-  </details>
+    <details class="debug">
+      <summary>Raw Sensor Data</summary>
+      <div class="debug-grid">
+        <div><span>baseline</span> <span id="dbgBaseline">–</span></div>
+        <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
+        <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
+        <div><span>net accel</span> <span id="dbgNet">–</span></div>
+        <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
+        <div><span>roll rate</span> <span id="dbgRot">–</span></div>
+        <div><span>sample hz</span> <span id="dbgHz">–</span></div>
+      </div>
+    </details>
 
-  <footer>No course, no ball — this build only answers one question:<br>does swinging the phone feel like golf?</footer>
+    <details class="debug">
+      <summary>Swing Debug Log</summary>
+      <div class="dbg-list" id="debugLogList">
+        <div class="history-empty">No swing attempts yet.</div>
+      </div>
+    </details>
+  </div>
+
+  <footer>Open the course on your laptop, connect below, then swing.</footer>
 </div>
 
 <div class="picker-overlay" id="pickerOverlay">
