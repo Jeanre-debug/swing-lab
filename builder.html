@@ -238,6 +238,7 @@
       <button class="tool" data-tool="bunker"><span class="swatch" style="background:#d9b877"></span>Bunker<span class="count" id="cnt-bunker">0</span></button>
       <button class="tool" data-tool="water"><span class="swatch" style="background:#3a7fc1"></span>Water<span class="count" id="cnt-water">0</span></button>
       <button class="tool" data-tool="tree"><span class="swatch" style="background:#2e6b3e"></span>Tree<span class="count" id="cnt-tree">0</span></button>
+      <button class="tool" data-tool="ob" title="Out of Bounds"><span class="swatch" style="background:#8f8578"></span>OB<span class="count" id="cnt-ob">0</span></button>
     </div>
 
     <div class="grid-wrap">
@@ -288,7 +289,7 @@
 
   var TYPE_COLOR = {
     rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a",
-    bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e"
+    bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e", ob: "#8f8578"
   };
 
   function newGrid() {
@@ -390,7 +391,7 @@
 
   function updateStats() {
     var h = currentHole();
-    var counts = { rough: 0, fairway: 0, green: 0, bunker: 0, water: 0, tree: 0 };
+    var counts = { rough: 0, fairway: 0, green: 0, bunker: 0, water: 0, tree: 0, ob: 0 };
     for (var y = 0; y < ROWS; y++) for (var x = 0; x < COLS; x++) counts[h.tiles[y][x]]++;
     Object.keys(counts).forEach(function (k) {
       var el = $("cnt-" + k);

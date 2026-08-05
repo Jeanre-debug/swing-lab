@@ -395,7 +395,7 @@ function tileTypeAt(worldX, worldZ) {
 }
 
 // Real, not just cosmetic: what you're hitting FROM changes how much speed the shot keeps.
-var TERRAIN_SPEED_MULT = { fairway: 1.0, green: 1.0, rough: 0.82, bunker: 0.55, water: 1.0, tree: 0.7 };
+var TERRAIN_SPEED_MULT = { fairway: 1.0, green: 1.0, rough: 0.82, bunker: 0.55, water: 1.0, tree: 0.7, ob: 0.8 };
 
 // Shared between both hole builders below.
 function addHoleAndFlag(pos) {
@@ -426,6 +426,7 @@ function addTeeMarkers(pos, right) {
 function buildDefaultHole() {
   currentTileGrid = null;
   currentTileMeta = null;
+  activeWaterMaterial = null;
   setHoleVectors({ x: 0, z: 6 }, { x: 0, z: 6 - 150 });
 
   function makeGround(width, length, segX, segZ, amplitude, color, z) {
@@ -487,14 +488,14 @@ var TILE_STYLE = {
   green: { color: 0x6fb96a, y: 0.03 },
   bunker: { color: 0xd9b877, y: -0.06 },
   water: { color: 0x3a7fc1, y: -0.08 },
-  tree: { color: 0x3c7a4a, y: -0.02 } // base under a tree tile is grass; the tree itself sits on top
+  tree: { color: 0x3c7a4a, y: -0.02 }, // base under a tree tile is grass; the tree itself sits on top
+  ob: { color: 0x8f8578, y: -0.02 } // dead/unmaintained ground — matches the builder's OB swatch
 };
 
-function buildLayerMesh(cells, color, yOffset, tileSize) {
+function buildLayerMesh(cells, material, yOffset, tileSize) {
   if (!cells.length) return null;
   var geo = new THREE.BoxGeometry(tileSize * 0.98, 0.14, tileSize * 0.98);
-  var mat = new THREE.MeshStandardMaterial({ color: color, flatShading: true, roughness: 1 });
-  var mesh = new THREE.InstancedMesh(geo, mat, cells.length);
+  var mesh = new THREE.InstancedMesh(geo, material, cells.length);
   mesh.receiveShadow = true;
   var m = new THREE.Matrix4();
   cells.forEach(function (c, i) {
@@ -504,6 +505,48 @@ function buildLayerMesh(cells, color, yOffset, tileSize) {
   mesh.instanceMatrix.needsUpdate = true;
   return mesh;
 }
+
+// Water gets its own animated material instead of a flat color — a gentle vertical bob plus
+// scrolling ripple/glint bands in the fragment shader, layered onto MeshStandardMaterial via
+// onBeforeCompile so it keeps normal lighting/instancing support rather than being a bespoke
+// ShaderMaterial that would have to reimplement all of that by hand.
+function createWaterMaterial() {
+  var material = new THREE.MeshStandardMaterial({
+    color: 0x2f7fc0, flatShading: true, roughness: 0.3, metalness: 0.1,
+    transparent: true, opacity: 0.92
+  });
+  material.onBeforeCompile = function (shader) {
+    shader.uniforms.uTime = { value: 0 };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform float uTime;\nvarying vec3 vWaterWorldPos;")
+      .replace("#include <begin_vertex>", [
+        "#include <begin_vertex>",
+        "#ifdef USE_INSTANCING",
+        "  vec3 waterWorldPos = (instanceMatrix * vec4(position, 1.0)).xyz;",
+        "#else",
+        "  vec3 waterWorldPos = position;",
+        "#endif",
+        "vWaterWorldPos = waterWorldPos;",
+        "transformed.y += sin(waterWorldPos.x * 0.35 + waterWorldPos.z * 0.28 + uTime * 1.6) * 0.05;"
+      ].join("\n"));
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform float uTime;\nvarying vec3 vWaterWorldPos;")
+      .replace("#include <color_fragment>", [
+        "#include <color_fragment>",
+        "{",
+        "  float ripple = sin(vWaterWorldPos.x * 0.6 + uTime * 1.3) * sin(vWaterWorldPos.z * 0.5 - uTime * 1.1);",
+        "  float glint = smoothstep(0.82, 1.0, ripple);",
+        "  diffuseColor.rgb += glint * 0.4;",
+        "  diffuseColor.rgb *= 0.9 + 0.12 * sin(vWaterWorldPos.x * 0.3 - vWaterWorldPos.z * 0.25 + uTime * 0.8);",
+        "}"
+      ].join("\n"));
+    material.userData.shader = shader;
+  };
+  return material;
+}
+// Set whenever the current hole has water, so animate() knows what to tick and clearHoleGroup's
+// disposal (which runs on every hole transition) doesn't leave a stale reference behind.
+var activeWaterMaterial = null;
 
 function buildTileHole(course) {
   var cols = course.grid_cols, rows = course.grid_rows, tileSize = course.tile_size || 5;
@@ -534,9 +577,17 @@ function buildTileHole(course) {
     }
   }
 
+  activeWaterMaterial = null;
   Object.keys(byType).forEach(function (type) {
     var style = TILE_STYLE[type] || TILE_STYLE.rough;
-    var mesh = buildLayerMesh(byType[type], style.color, style.y, tileSize);
+    var material;
+    if (type === "water") {
+      material = createWaterMaterial();
+      activeWaterMaterial = material;
+    } else {
+      material = new THREE.MeshStandardMaterial({ color: style.color, flatShading: true, roughness: 1 });
+    }
+    var mesh = buildLayerMesh(byType[type], material, style.y, tileSize);
     if (mesh) holeGroup.add(mesh);
   });
 
@@ -724,7 +775,7 @@ var mmBg = document.createElement("canvas");
 mmBg.width = MM_W; mmBg.height = MM_H;
 var mmBgCtx = mmBg.getContext("2d");
 var mmScale = 1, mmOffX = 0, mmOffZ = 0;
-var MM_TYPE_COLOR = { rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a", bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e" };
+var MM_TYPE_COLOR = { rough: "#3c7a4a", fairway: "#5a9c5f", green: "#6fb96a", bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e", ob: "#8f8578" };
 
 function worldToMM(x, z) {
   return { x: mmOffX + x * mmScale, y: mmOffZ + z * mmScale };
@@ -888,6 +939,92 @@ function updateContactBurst() {
   }
   burstRing.scale.setScalar(1 + p * 5);
   burstRing.material.opacity = 0.9 * (1 - p);
+}
+
+// ---- Water splash: droplet burst + expanding ripple rings, triggered the moment a ball
+// settles on a water tile (there's no real splash-on-entry physics here, just this feedback) ----
+var SPLASH_DROPLET_COUNT = 12;
+var splashDroplets = [];
+for (var sd = 0; sd < SPLASH_DROPLET_COUNT; sd++) {
+  var dropletMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 6, 5),
+    new THREE.MeshBasicMaterial({ color: 0xdff2ff, transparent: true, opacity: 0 })
+  );
+  dropletMesh.visible = false;
+  scene.add(dropletMesh);
+  splashDroplets.push({ mesh: dropletMesh, vel: new THREE.Vector3(), active: false, startT: 0 });
+}
+
+var SPLASH_RING_COUNT = 2;
+var splashRings = [];
+for (var sr = 0; sr < SPLASH_RING_COUNT; sr++) {
+  var splashRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, 0.5, 28),
+    new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+  );
+  splashRing.rotation.x = -Math.PI / 2;
+  splashRing.visible = false;
+  scene.add(splashRing);
+  splashRings.push(splashRing);
+}
+var splashActive = false, splashStartT = 0;
+var SPLASH_RING_DURATION = 1.0;
+var SPLASH_DROPLET_LIFE = 0.7;
+var SPLASH_GRAVITY = 9;
+
+function triggerWaterSplash(x, y, z) {
+  splashActive = true;
+  splashStartT = clock.getElapsedTime();
+
+  splashRings.forEach(function (ring) {
+    ring.position.set(x, y + 0.03, z);
+    ring.scale.setScalar(1);
+    ring.visible = true;
+  });
+
+  splashDroplets.forEach(function (d) {
+    d.mesh.position.set(x, y, z);
+    var angle = Math.random() * Math.PI * 2;
+    var outSpeed = 1.2 + Math.random() * 1.8;
+    d.vel.set(Math.cos(angle) * outSpeed, 3.5 + Math.random() * 2.5, Math.sin(angle) * outSpeed);
+    d.mesh.material.opacity = 0.95;
+    d.mesh.visible = true;
+    d.active = true;
+    d.startT = splashStartT;
+  });
+}
+
+function updateWaterSplash(dt) {
+  var now = clock.getElapsedTime();
+
+  if (splashActive) {
+    var ringP = (now - splashStartT) / SPLASH_RING_DURATION;
+    if (ringP >= 1) {
+      splashActive = false;
+      splashRings.forEach(function (ring) { ring.visible = false; });
+    } else {
+      splashRings.forEach(function (ring, i) {
+        // Stagger the two rings so the second trails the first outward, rather than both
+        // expanding in lockstep as one ring.
+        var staggered = clamp(ringP - i * 0.15, 0, 1);
+        ring.scale.setScalar(1 + staggered * 7);
+        ring.material.opacity = 0.6 * (1 - staggered);
+      });
+    }
+  }
+
+  splashDroplets.forEach(function (d) {
+    if (!d.active) return;
+    var age = now - d.startT;
+    if (age > SPLASH_DROPLET_LIFE) {
+      d.active = false;
+      d.mesh.visible = false;
+      return;
+    }
+    d.vel.y -= SPLASH_GRAVITY * dt;
+    d.mesh.position.addScaledVector(d.vel, dt);
+    d.mesh.material.opacity = 0.95 * (1 - age / SPLASH_DROPLET_LIFE);
+  });
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -1201,20 +1338,25 @@ function animate() {
         settled = true;
         cameraMode = "result";
 
-        // Stroke-and-distance: a ball that comes to rest on a water tile never lay there in
-        // real golf — it's fished out under penalty and replayed from where this shot was hit.
-        // Simplest correct ruling for this physics model (no actual splash/sink simulation).
-        if (tileTypeAt(ballBody.position.x, ballBody.position.z) === "water") {
+        // Stroke-and-distance: a ball that comes to rest on water or out-of-bounds never lay
+        // there in real golf — it's replayed under penalty from where this shot was hit. Real
+        // golf's OB ruling is actually replay-from-the-tee-shot-source too (stroke and
+        // distance), same mechanic as water here, just no splash and a different message.
+        var restTile = tileTypeAt(ballBody.position.x, ballBody.position.z);
+        if (restTile === "water" || restTile === "ob") {
+          if (restTile === "water") triggerWaterSplash(ballBody.position.x, ballBody.position.y, ballBody.position.z);
           strokesThisHole++;
           els.strokes.textContent = strokesThisHole;
           ballBody.position.copy(shotStartPos);
           ballBody.velocity.set(0, 0, 0);
           ballBody.angularVelocity.set(0, 0, 0);
           ballMesh.position.copy(ballBody.position);
-          els.lastShot.innerHTML = "Water<span class=\"unit\">, +1</span>";
+          els.lastShot.innerHTML = (restTile === "water" ? "Water" : "OB") + '<span class="unit">, +1</span>';
           var toPinFromDrop = Math.hypot(HOLE_POS.x - shotStartPos.x, HOLE_POS.z - shotStartPos.z);
           els.toPin.innerHTML = toPinFromDrop.toFixed(1) + '<span class="unit">m</span>';
-          els.shotLine.textContent = "Splash! Replayed from the same spot, +1 stroke";
+          els.shotLine.textContent = restTile === "water"
+            ? "Splash! Replayed from the same spot, +1 stroke"
+            : "Out of bounds! Replayed from the same spot, +1 stroke";
           setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
         } else {
           var dx = ballBody.position.x - shotStartPos.x;
@@ -1265,7 +1407,11 @@ function animate() {
     camera.lookAt(ballMesh.position.x + shotFwd.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + shotFwd.z * 6);
   }
 
+  if (activeWaterMaterial && activeWaterMaterial.userData.shader) {
+    activeWaterMaterial.userData.shader.uniforms.uTime.value = clock.getElapsedTime();
+  }
   updateContactBurst();
+  updateWaterSplash(dt);
   drawMinimapFrame();
   updateAimTrail();
   renderer.render(scene, camera);
