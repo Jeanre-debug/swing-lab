@@ -973,6 +973,15 @@
   var swingPeak = null; // {t, net}
   var riseStartT = null; // time of the most recent quiet point the current rise began from
   var fallCount = 0;
+  // Backswing and downswing are, by definition, opposite rotation directions — a signal that
+  // holds regardless of speed or whether there's a pause at the top. A fast/aggressive swing
+  // can blend straight from backswing into downswing with no genuine stillness to re-arm on,
+  // so the pause-based check above can't help there — but the swing still has to reverse
+  // direction to get from one to the other, so requiring that reversal catches what a pause
+  // check misses, independent of tempo.
+  var YAW_REVERSAL_THRESHOLD = 25; // deg/s — below this, sign isn't trusted as real rotation, just noise
+  var backswingYawSign = 0;
+  var hasReversed = false;
   var lastNet = 0;
   var resultUntil = 0;
   var history = [];
@@ -1136,6 +1145,7 @@
       fallCount: fallCount,
       fallCountMin: FALL_COUNT_MIN,
       fallPass: fallCount >= FALL_COUNT_MIN,
+      reversedPass: hasReversed,
       sampleCount: attemptSampleCount,
       avgHz: Math.round(attemptSampleCount / elapsedSec),
       maxGapMs: Math.round(attemptMaxGapMs),
@@ -1180,6 +1190,7 @@
         '<div class="dbg-row">' + chk(e.risePass, "rise " + Math.round(e.riseDur) + "ms / max " + e.riseMaxMs + "ms (or peak >" + PEAK_DOMINANCE_BYPASS + "x gate)") + '</div>' +
         '<div class="dbg-row">' + chk(e.minSwingPass, "duration " + Math.round(e.totalDur) + "ms / min " + e.minSwingMs + "ms") + '</div>' +
         '<div class="dbg-row">' + chk(e.fallPass, "fallCount " + e.fallCount + " (need ≥" + e.fallCountMin + ")") + '</div>' +
+        '<div class="dbg-row">' + chk(e.reversedPass, "direction reversed (backswing→downswing)") + '</div>' +
         '<div class="dbg-row">' + chk(e.sincePeakPass, "since peak " + Math.round(e.sincePeak) + "ms (need <500ms)") + '</div>' +
         '<div class="dbg-row dbg-muted">samples ' + e.sampleCount + " · " + e.avgHz + "Hz avg · max gap " + e.maxGapMs + "ms · re-arms " + e.rearmCount + '</div>' +
         '<div class="dbg-row dbg-muted">baseline ' + e.baseline.toFixed(2) + " · noise σ " + e.noiseStd.toFixed(3) + " · armThreshold " + e.armThreshold.toFixed(2) + '</div>' +
@@ -1285,6 +1296,8 @@
     var cutoff = t - WINDOW_MS;
     while (buffer.length && buffer[0].t < cutoff) buffer.shift();
 
+    var yawRate = (beta * gx + gamma * gy + alpha * gz) / (magnitude(gx, gy, gz) || 1);
+
     if (state === "ready") {
       if (net > armThreshold) {
         state = "swinging";
@@ -1296,12 +1309,21 @@
         attemptMaxGapMs = 0;
         attemptRearmCount = 0;
         attemptLastT = t;
+        backswingYawSign = 0;
+        hasReversed = false;
         setPhase("BACKSWING", "hot");
       }
     } else if (state === "swinging") {
       attemptSampleCount++;
       if (attemptLastT !== null) attemptMaxGapMs = Math.max(attemptMaxGapMs, t - attemptLastT);
       attemptLastT = t;
+
+      if (backswingYawSign === 0 && Math.abs(yawRate) > YAW_REVERSAL_THRESHOLD) {
+        backswingYawSign = yawRate > 0 ? 1 : -1;
+      } else if (backswingYawSign !== 0 && !hasReversed && Math.abs(yawRate) > YAW_REVERSAL_THRESHOLD
+                 && (yawRate > 0 ? 1 : -1) === -backswingYawSign) {
+        hasReversed = true;
+      }
 
       if (net > swingPeak.net) {
         swingPeak = { t: t, net: net };
@@ -1337,7 +1359,7 @@
         var gateNow = armThreshold * IMPACT_GATE_MULTIPLIER;
         var riseOk = (swingPeak.t - riseStartT) < RISE_MAX_MS || swingPeak.net > gateNow * PEAK_DOMINANCE_BYPASS;
         if (fallCount >= FALL_COUNT_MIN && (t - swingPeak.t) < 500 && swingPeak.net > gateNow
-            && (t - swingStart.t) > MIN_SWING_MS && riseOk) {
+            && (t - swingStart.t) > MIN_SWING_MS && riseOk && hasReversed) {
           finalizeSwing(t);
         }
       }
