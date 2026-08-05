@@ -99,6 +99,16 @@
   canvas#grid { display: block; cursor: crosshair; touch-action: none; }
 
   .checklist { display: flex; flex-direction: column; gap: 6px; min-width: 190px; }
+  .length-readout {
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+  }
+  .length-readout .label { display: block; font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .length-readout .val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; color: var(--paper); }
+  .length-readout .val .unit { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 3px; }
   .check-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
   .check-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-dim); flex-shrink: 0; }
   .check-item.ok { color: var(--paper); }
@@ -188,6 +198,10 @@
     </div>
 
     <div class="checklist">
+      <div class="length-readout">
+        <span class="label">Hole Length</span>
+        <span class="val" id="holeLengthVal">&#8211;<span class="unit">m</span></span>
+      </div>
       <div class="check-item" id="check-tee"><span class="dot"></span>Tee placed</div>
       <div class="check-item" id="check-pin"><span class="dot"></span>Pin placed</div>
       <div class="check-item" id="check-fairway"><span class="dot"></span>Fairway laid (15+ tiles)</div>
@@ -242,7 +256,8 @@
     newBtn: $("newBtn"), loadBtn: $("loadBtn"), saveBtn: $("saveBtn"), playBtn: $("playBtn"),
     message: $("message"),
     loadOverlay: $("loadOverlay"), closeLoad: $("closeLoad"), courseList: $("courseList"),
-    checkTee: $("check-tee"), checkPin: $("check-pin"), checkFairway: $("check-fairway")
+    checkTee: $("check-tee"), checkPin: $("check-pin"), checkFairway: $("check-fairway"),
+    holeLengthVal: $("holeLengthVal")
   };
 
   function resizeCanvas() {
@@ -299,6 +314,14 @@
     setCheck(els.checkTee, !!tee);
     setCheck(els.checkPin, !!pin);
     setCheck(els.checkFairway, counts.fairway >= 15);
+
+    if (tee && pin) {
+      var dx = (tee.x - pin.x) * TILE_SIZE, dy = (tee.y - pin.y) * TILE_SIZE;
+      var length = Math.sqrt(dx * dx + dy * dy);
+      els.holeLengthVal.innerHTML = length.toFixed(0) + '<span class="unit">m</span>';
+    } else {
+      els.holeLengthVal.innerHTML = '&#8211;<span class="unit">m</span>';
+    }
   }
 
   function setCheck(el, ok) { el.classList.toggle("ok", ok); }

@@ -626,10 +626,40 @@ function rotateBasis(deg) {
   };
 }
 
+// A trail of ground dots along the aimed direction, visible in the main viewport (not just the
+// minimap). Deliberately just positioned points rather than a rotated/stretched mesh — that
+// needs no orientation math at all, so there's no risk of a sign error pointing it backwards.
+var AIM_DOTS_N = 8, AIM_DOT_SPACING = 3.2;
+var aimDots = [];
+for (var aimDotI = 0; aimDotI < AIM_DOTS_N; aimDotI++) {
+  var aimDot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 6, 6),
+    new THREE.MeshBasicMaterial({ color: 0xe8543f, transparent: true, opacity: 1 - aimDotI * 0.09 })
+  );
+  scene.add(aimDot);
+  aimDots.push(aimDot);
+}
+
+function updateAimTrail() {
+  var visible = cameraMode === "tee" && !!ballBody;
+  aimDots.forEach(function (d) { d.visible = visible; });
+  if (!visible) return;
+  var aim = rotateBasis(aimOffsetDeg);
+  for (var i = 0; i < AIM_DOTS_N; i++) {
+    var t = (i + 1.5) * AIM_DOT_SPACING;
+    aimDots[i].position.set(
+      ballBody.position.x + aim.fwd.x * t,
+      0.16,
+      ballBody.position.z + aim.fwd.z * t
+    );
+  }
+}
+
 function setAim(deg) {
   aimOffsetDeg = clamp(deg, -AIM_MAX, AIM_MAX);
   document.getElementById("aimVal").textContent = Math.round(aimOffsetDeg) + "°";
   drawMinimapFrame();
+  updateAimTrail();
 }
 document.getElementById("aimLeft").addEventListener("click", function () { setAim(aimOffsetDeg - AIM_STEP); });
 document.getElementById("aimRight").addEventListener("click", function () { setAim(aimOffsetDeg + AIM_STEP); });
@@ -813,6 +843,7 @@ function animate() {
   }
 
   drawMinimapFrame();
+  updateAimTrail();
   renderer.render(scene, camera);
 }
 
