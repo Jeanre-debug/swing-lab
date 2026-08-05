@@ -930,6 +930,12 @@ function scoreLabel(strokes, par) {
 }
 
 function onHoleComplete() {
+  // Otherwise whatever velocity/spin the ball still had at the instant it crossed the cup
+  // threshold keeps integrating — same "very slight creep" as the settle branch below, just
+  // happening right next to the pin instead.
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+
   var p = currentPlayer();
   p.finishedHole = true;
   p.strokes = strokesThisHole;
@@ -1777,6 +1783,13 @@ function animate() {
       if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
         settled = true;
         cameraMode = "result";
+        // The 0.35 speed check only gates WHEN we call it settled — it doesn't mean the ball
+        // was actually at rest. Left alone, that last sliver of linear/angular velocity (plus
+        // whatever spin never got checked at all) kept integrating every frame after settled
+        // was already true, reading as a very slight ongoing creep even once the game had
+        // already announced the shot was over and it was time to swing again.
+        ballBody.velocity.set(0, 0, 0);
+        ballBody.angularVelocity.set(0, 0, 0);
 
         // Stroke-and-distance: a ball that comes to rest out-of-bounds never lay there in real
         // golf — it's replayed under penalty from where this shot was hit (water is handled
@@ -1785,9 +1798,7 @@ function animate() {
         if (restTile === "ob") {
           strokesThisHole++;
           els.strokes.textContent = strokesThisHole;
-          ballBody.position.copy(shotStartPos);
-          ballBody.velocity.set(0, 0, 0);
-          ballBody.angularVelocity.set(0, 0, 0);
+          ballBody.position.copy(shotStartPos); // velocity's already zeroed just above
           ballMesh.position.copy(ballBody.position);
           els.lastShot.innerHTML = "OB<span class=\"unit\">, +1</span>";
           var toPinFromDrop = Math.hypot(HOLE_POS.x - shotStartPos.x, HOLE_POS.z - shotStartPos.z);
