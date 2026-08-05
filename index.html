@@ -455,7 +455,7 @@
   .picker-item .n { font-family: var(--sans); font-size: 16px; font-weight: 600; color: var(--paper); }
   .picker-item .l { font-family: var(--mono); font-size: 12px; color: var(--sand); font-variant-numeric: tabular-nums; }
 
-  button#action {
+  button#action, button#joinBtn {
     appearance: none;
     border: none;
     width: 100%;
@@ -471,10 +471,10 @@
     font-family: var(--sans);
     transition: background 0.15s ease, opacity 0.15s ease;
   }
-  button#action:active { opacity: 0.85; }
-  button#action:disabled { background: var(--line-strong); color: var(--muted); }
+  button#action:active, button#joinBtn:active { opacity: 0.85; }
+  button#action:disabled, button#joinBtn:disabled { background: var(--line-strong); color: var(--muted); }
   button#action.recal { background: var(--panel-raised); color: var(--paper); border: 1px solid var(--line-strong); }
-  button#action:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
+  button#action:focus-visible, button#joinBtn:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
 
   .hint {
     text-align: center;
@@ -601,6 +601,63 @@
     padding: 4px 8px 0;
     line-height: 1.5;
   }
+
+  .hidden { display: none !important; }
+
+  .join-row { display: flex; gap: 8px; margin-top: 10px; }
+  .join-row input {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    outline: none;
+  }
+  .join-row input:focus-visible { outline: 2px solid var(--sand); }
+  #joinCode { flex: none; width: 84px; text-transform: uppercase; letter-spacing: 0.1em; font-family: var(--mono); text-align: center; }
+  .join-error {
+    display: none;
+    color: var(--flag);
+    font-size: 12.5px;
+    margin-top: 8px;
+  }
+  .join-error.show { display: block; }
+
+  .room-code-display { text-align: center; padding: 6px 0 10px; }
+  .room-code-display .label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+  .room-code-display .code { font-family: var(--mono); font-size: 40px; font-weight: 700; letter-spacing: 0.12em; color: var(--sand); margin-top: 4px; }
+
+  .roster-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .roster-row {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .roster-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--turf); flex-shrink: 0; }
+  .roster-empty { font-size: 12.5px; color: var(--muted); padding: 4px 2px; }
+  .waiting-hint { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 12px; }
+
+  .turn-banner {
+    text-align: center;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 9px 10px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--muted);
+  }
+  .turn-banner.mine { background: color-mix(in srgb, var(--turf) 18%, var(--panel-raised)); border-color: var(--turf); color: var(--turf); }
 </style>
 
 <div class="console">
@@ -617,7 +674,30 @@
     <button id="wsConnect">Connect</button>
   </div>
 
-  <div class="panel" id="mainPanel">
+  <div class="panel hidden" id="joinPanel">
+    <div class="eyebrow">Join a Room</div>
+    <div class="join-row">
+      <input id="joinName" placeholder="Your name" autocomplete="off" spellcheck="false" maxlength="20">
+      <input id="joinCode" placeholder="CODE" autocomplete="off" spellcheck="false" maxlength="4">
+    </div>
+    <button id="joinBtn">Join</button>
+    <div class="join-error" id="joinError"></div>
+  </div>
+
+  <div class="panel hidden" id="waitingPanel">
+    <div class="room-code-display">
+      <div class="label">Room Code</div>
+      <div class="code" id="waitingRoomCode">&#8211;</div>
+    </div>
+    <div class="eyebrow">Players</div>
+    <div class="roster-list" id="rosterList">
+      <div class="roster-empty">Just you so far.</div>
+    </div>
+    <div class="waiting-hint">Waiting for the host to start the round&hellip;</div>
+  </div>
+
+  <div class="panel hidden" id="mainPanel">
+    <div class="turn-banner" id="turnBanner">Your Turn</div>
     <div class="status-strip">
       <div class="phase" id="phase">IDLE</div>
       <div class="dot-wrap">
@@ -692,38 +772,40 @@
     </details>
   </div>
 
-  <div class="panel history">
-    <div class="head">
-      <div class="eyebrow">Recent Swings</div>
-      <button class="clear" id="clear">Clear</button>
-    </div>
-    <div class="history-list" id="historyList">
-      <div class="history-empty">No swings recorded yet.</div>
-    </div>
-  </div>
-
-  <div class="panel diagnostics">
-    <div class="eyebrow">Diagnostics</div>
-
-    <details class="debug">
-      <summary>Raw Sensor Data</summary>
-      <div class="debug-grid">
-        <div><span>baseline</span> <span id="dbgBaseline">–</span></div>
-        <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
-        <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
-        <div><span>net accel</span> <span id="dbgNet">–</span></div>
-        <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
-        <div><span>roll rate</span> <span id="dbgRot">–</span></div>
-        <div><span>sample hz</span> <span id="dbgHz">–</span></div>
+  <div id="postJoinExtras" class="hidden">
+    <div class="panel history">
+      <div class="head">
+        <div class="eyebrow">Recent Swings</div>
+        <button class="clear" id="clear">Clear</button>
       </div>
-    </details>
-
-    <details class="debug">
-      <summary>Swing Debug Log</summary>
-      <div class="dbg-list" id="debugLogList">
-        <div class="history-empty">No swing attempts yet.</div>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">No swings recorded yet.</div>
       </div>
-    </details>
+    </div>
+
+    <div class="panel diagnostics">
+      <div class="eyebrow">Diagnostics</div>
+
+      <details class="debug">
+        <summary>Raw Sensor Data</summary>
+        <div class="debug-grid">
+          <div><span>baseline</span> <span id="dbgBaseline">–</span></div>
+          <div><span>noise σ</span> <span id="dbgNoise">–</span></div>
+          <div><span>threshold</span> <span id="dbgThreshold">–</span></div>
+          <div><span>net accel</span> <span id="dbgNet">–</span></div>
+          <div><span>yaw rate</span> <span id="dbgYaw">–</span></div>
+          <div><span>roll rate</span> <span id="dbgRot">–</span></div>
+          <div><span>sample hz</span> <span id="dbgHz">–</span></div>
+        </div>
+      </details>
+
+      <details class="debug">
+        <summary>Swing Debug Log</summary>
+        <div class="dbg-list" id="debugLogList">
+          <div class="history-empty">No swing attempts yet.</div>
+        </div>
+      </details>
+    </div>
   </div>
 
   <footer>Open the course on your laptop, connect below, then swing.</footer>
@@ -754,8 +836,49 @@
     dbgBaseline: $("dbgBaseline"), dbgNoise: $("dbgNoise"),
     dbgThreshold: $("dbgThreshold"), dbgNet: $("dbgNet"),
     dbgYaw: $("dbgYaw"), dbgRot: $("dbgRot"), dbgHz: $("dbgHz"),
-    wsStatus: $("wsStatus"), wsStatusText: $("wsStatusText"), wsUrl: $("wsUrl"), wsConnect: $("wsConnect")
+    wsStatus: $("wsStatus"), wsStatusText: $("wsStatusText"), wsUrl: $("wsUrl"), wsConnect: $("wsConnect"),
+    joinPanel: $("joinPanel"), joinName: $("joinName"), joinCode: $("joinCode"), joinBtn: $("joinBtn"), joinError: $("joinError"),
+    waitingPanel: $("waitingPanel"), waitingRoomCode: $("waitingRoomCode"), rosterList: $("rosterList"),
+    mainPanel: $("mainPanel"), postJoinExtras: $("postJoinExtras"), turnBanner: $("turnBanner")
   };
+
+  // ---- Multiplayer room state ----
+  var myPlayerId = null;
+  var myRoomCode = null;
+  var roster = []; // [{id, name}]
+  var isMyTurn = false;
+  var roundStarted = false;
+
+  function showScreen(name) {
+    // "join" | "waiting" | "playing" — exactly one of these three panels is visible at a time.
+    els.joinPanel.classList.toggle("hidden", name !== "join");
+    els.waitingPanel.classList.toggle("hidden", name !== "waiting");
+    els.mainPanel.classList.toggle("hidden", name !== "playing");
+    els.postJoinExtras.classList.toggle("hidden", name !== "playing");
+  }
+
+  function renderRoster() {
+    if (!roster.length) {
+      els.rosterList.innerHTML = '<div class="roster-empty">Just you so far.</div>';
+      return;
+    }
+    els.rosterList.innerHTML = roster.map(function (p) {
+      return '<div class="roster-row"><span class="dot"></span>' + p.name + (p.id === myPlayerId ? " (you)" : "") + "</div>";
+    }).join("");
+  }
+
+  var currentTurnPlayerId = null;
+  function updateTurnBanner() {
+    if (isMyTurn) {
+      els.turnBanner.textContent = "Your Turn";
+      els.turnBanner.classList.add("mine");
+    } else {
+      var current = null;
+      for (var i = 0; i < roster.length; i++) if (roster[i].id === currentTurnPlayerId) current = roster[i];
+      els.turnBanner.textContent = current ? ("Waiting for " + current.name + "’s turn") : "Waiting for your turn";
+      els.turnBanner.classList.remove("mine");
+    }
+  }
 
   var WS_STORAGE_KEY = "swingLabServerUrl";
   var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
@@ -775,8 +898,13 @@
     socket.onopen = function () {
       els.wsStatus.classList.add("live");
       els.wsStatusText.textContent = "Live";
-      var club = CLUBS[selectedClubIndex];
-      socket.send(JSON.stringify({ type: "club", clubName: club.name, loftDeg: club.loft }));
+      // Nothing sent here yet — a fresh connection isn't in a room yet, so there's no host to
+      // route a "club" (or anything else) to until player_join succeeds below.
+      myPlayerId = null;
+      myRoomCode = null;
+      roundStarted = false;
+      isMyTurn = false;
+      showScreen("join");
     };
     socket.onclose = function () {
       els.wsStatus.classList.remove("live");
@@ -786,11 +914,74 @@
       els.wsStatus.classList.remove("live");
       els.wsStatusText.textContent = "Error";
     };
+    socket.onmessage = function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+      if (msg.type === "joined") {
+        myPlayerId = msg.playerId;
+        myRoomCode = msg.code;
+        els.waitingRoomCode.textContent = msg.code;
+        els.joinError.classList.remove("show");
+        showScreen("waiting");
+        var club = CLUBS[selectedClubIndex];
+        socket.send(JSON.stringify({ type: "club", clubName: club.name, loftDeg: club.loft }));
+      } else if (msg.type === "join_error") {
+        els.joinError.textContent = msg.reason || "Couldn't join that room.";
+        els.joinError.classList.add("show");
+      } else if (msg.type === "roster") {
+        roster = msg.players || [];
+        renderRoster();
+        updateTurnBanner();
+      } else if (msg.type === "start_round") {
+        roundStarted = true;
+        showScreen("playing");
+      } else if (msg.type === "turn") {
+        currentTurnPlayerId = msg.playerId;
+        isMyTurn = msg.playerId === myPlayerId;
+        if (roundStarted) showScreen("playing");
+        updateTurnBanner();
+      } else if (msg.type === "room_closed") {
+        myPlayerId = null;
+        myRoomCode = null;
+        roundStarted = false;
+        isMyTurn = false;
+        els.joinError.textContent = "The host closed the room. Join again to reconnect.";
+        els.joinError.classList.add("show");
+        showScreen("join");
+      }
+    };
   }
   els.wsConnect.addEventListener("click", connectSocket);
   if (els.wsUrl.value) connectSocket();
 
+  els.joinCode.addEventListener("input", function () {
+    els.joinCode.value = els.joinCode.value.toUpperCase();
+  });
+  [els.joinName, els.joinCode].forEach(function (input) {
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") els.joinBtn.click();
+    });
+  });
+
+  els.joinBtn.addEventListener("click", function () {
+    var name = els.joinName.value.trim();
+    var code = els.joinCode.value.trim();
+    if (!name || !code) {
+      els.joinError.textContent = "Enter your name and the room code.";
+      els.joinError.classList.add("show");
+      return;
+    }
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      els.joinError.textContent = "Not connected yet — check the server address above.";
+      els.joinError.classList.add("show");
+      return;
+    }
+    socket.send(JSON.stringify({ type: "player_join", code: code, name: name }));
+  });
+
   function sendSwing(payload) {
+    if (!isMyTurn) return; // not your turn — swing detection can keep running locally, just nothing gets sent
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(Object.assign({ type: "swing" }, payload)));
     }
@@ -848,7 +1039,7 @@
     meterFill.style.width = live + "%";
     meterFill.classList.toggle("hi", live > 85);
     meterNum.textContent = live;
-    if (socket && socket.readyState === WebSocket.OPEN) {
+    if (isMyTurn && socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "power", power: live }));
     }
   }, 60);
@@ -1368,6 +1559,10 @@
   }
 
   function handleSample(net, alpha, beta, gamma, gx, gy, gz, t) {
+    // Frozen (not appended to the buffer either) rather than reset — the state machine just
+    // picks up exactly where it left off once it's this player's turn again, rather than
+    // treating "not your turn" as a swing-cancelling event mid-motion.
+    if (!isMyTurn) return;
     buffer.push({ t: t, net: net, alpha: alpha, beta: beta, gamma: gamma, gx: gx, gy: gy, gz: gz });
     var cutoff = t - WINDOW_MS;
     while (buffer.length && buffer[0].t < cutoff) buffer.shift();

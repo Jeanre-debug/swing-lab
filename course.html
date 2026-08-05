@@ -137,6 +137,7 @@
   }
   .btn:focus-visible { outline: 2px solid var(--sand); }
   .btn.primary { background: var(--turf); border-color: var(--turf); color: #06170d; }
+  .btn:disabled { background: var(--line-strong); border-color: var(--line-strong); color: var(--muted); }
 
   .bottom-stack {
     position: fixed;
@@ -214,6 +215,35 @@
     margin-right: 5px;
   }
   .fast-forward-hint.active { color: var(--sand); background: color-mix(in srgb, var(--sand) 14%, transparent); }
+
+  .room-code-hero { text-align: center; padding: 4px 0 14px; }
+  .room-code-hero .label { font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+  .room-code-hero .code { font-family: var(--mono); font-size: 56px; font-weight: 700; letter-spacing: 0.14em; color: var(--sand); margin-top: 6px; }
+  .room-code-hero .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .lobby-roster { display: flex; flex-direction: column; gap: 7px; margin: 14px 0; max-height: 220px; overflow-y: auto; }
+  .lobby-roster-row {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--panel-raised); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 12px; font-size: 14px; font-weight: 600;
+  }
+  .lobby-roster-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--turf); flex-shrink: 0; }
+  .lobby-empty { font-size: 12.5px; color: var(--muted); text-align: center; padding: 8px 0; }
+
+  .players-panel { min-width: 180px; }
+  .players-panel .player-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 2px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+    border-radius: 6px;
+  }
+  .players-panel .player-row.current { color: var(--paper); background: color-mix(in srgb, var(--turf) 16%, transparent); padding-left: 8px; padding-right: 8px; }
+  .players-panel .player-row .player-total { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .players-panel .player-row .player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .turn-panel { text-align: center; font-size: 14px; font-weight: 700; letter-spacing: 0.03em; color: var(--paper); }
+  .turn-panel .turn-club { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-top: 2px; letter-spacing: 0.04em; text-transform: none; }
+
+  .hidden { display: none !important; }
 </style>
 
 <div id="viewport"></div>
@@ -236,6 +266,16 @@
     </div>
 
     <a class="panel builder-link" href="builder.html" target="_blank" rel="noopener">Course Builder &rarr;</a>
+
+    <div class="panel players-panel hidden" id="playersPanel">
+      <div class="eyebrow">Players</div>
+      <div id="playersList"></div>
+    </div>
+  </div>
+
+  <div class="panel turn-panel hidden" id="turnPanel">
+    <span id="turnPanelText">Waiting&hellip;</span>
+    <span class="turn-club" id="turnPanelClub"></span>
   </div>
 
   <div class="panel readout-stack">
@@ -252,6 +292,21 @@
       <div class="val" id="lastShot">–<span class="unit">m</span></div>
       <div class="shot-line" id="shotLine"></div>
     </div>
+  </div>
+</div>
+
+<div class="overlay show" id="lobbyOverlay">
+  <div class="modal panel">
+    <div class="room-code-hero">
+      <div class="label">Room Code</div>
+      <div class="code" id="lobbyRoomCode">&#8211;&#8211;&#8211;&#8211;</div>
+      <div class="hint">Open the phone page, then join with this code</div>
+    </div>
+    <div class="eyebrow">Players</div>
+    <div class="lobby-roster" id="lobbyRoster">
+      <div class="lobby-empty">Waiting for players to join&hellip;</div>
+    </div>
+    <button class="btn primary" id="startRoundBtn" disabled>Start Round</button>
   </div>
 </div>
 
@@ -650,9 +705,136 @@ var roundHoles = [{ isDefault: true, par: 4 }];
 var currentHoleIdx = 0;
 var currentPar = 4;
 var strokesThisHole = 0;
-var scorecard = [];
 var CUP_RADIUS = 0.55; // generous vs. the real ~0.108m hole — matches this physics model's precision, not real golf
 var SCORE_NAME = { "-3": "Albatross", "-2": "Eagle", "-1": "Birdie", "0": "Par", "1": "Bogey", "2": "Double Bogey" };
+
+// ---- Multiplayer: room, roster, and turn-based per-player state ----
+// Each joined phone is a player who takes their own shots in rotation, each with their own ball
+// lie carried between turns (players[i].ballPos), same as a real group playing a hole together —
+// only one ball is ever rendered/simulated at a time, repositioned to whoever's turn it is.
+var roomCode = null;
+var roster = []; // [{id, name}] — mirrors the server's roster broadcast
+var rosterClubs = {}; // playerId -> clubName, tracked from the moment they join (players[] doesn't exist yet in the lobby)
+var players = []; // built from roster when Start Round is clicked: [{id, name, strokes, ballPos, finishedHole, holeScores, lastClubName}]
+var currentPlayerIdx = 0;
+var roundStarted = false;
+
+function currentPlayer() { return players[currentPlayerIdx] || null; }
+
+function renderLobbyRoster() {
+  var list = document.getElementById("lobbyRoster");
+  if (!roster.length) {
+    list.innerHTML = '<div class="lobby-empty">Waiting for players to join&hellip;</div>';
+  } else {
+    list.innerHTML = roster.map(function (p) {
+      return '<div class="lobby-roster-row"><span class="dot"></span>' + p.name + "</div>";
+    }).join("");
+  }
+  document.getElementById("startRoundBtn").disabled = roster.length === 0;
+}
+
+function playerTotal(p) {
+  var total = 0;
+  for (var i = 0; i < p.holeScores.length; i++) if (p.holeScores[i]) total += p.holeScores[i].strokes;
+  if (!p.finishedHole) total += p.strokes;
+  return total;
+}
+
+function updatePlayersPanel() {
+  var panel = document.getElementById("playersPanel");
+  if (!roundStarted || players.length < 2) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  document.getElementById("playersList").innerHTML = players.map(function (p, i) {
+    return '<div class="player-row' + (i === currentPlayerIdx ? " current" : "") + '">' +
+      '<span class="player-name">' + p.name + '</span><span class="player-total">' + playerTotal(p) + "</span></div>";
+  }).join("");
+}
+
+function updateTurnHud() {
+  var panel = document.getElementById("turnPanel");
+  if (!roundStarted) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  var p = currentPlayer();
+  document.getElementById("turnPanelText").textContent = p ? (players.length > 1 ? p.name + "’s Turn" : "Your Turn") : "–";
+  document.getElementById("turnPanelClub").textContent = p && p.lastClubName ? p.lastClubName : "";
+  if (p && p.lastClubName) els.clubName.textContent = p.lastClubName;
+}
+
+function broadcastTurn() {
+  if (socket && socket.readyState === WebSocket.OPEN && currentPlayer()) {
+    socket.send(JSON.stringify({ type: "turn", playerId: currentPlayer().id }));
+  }
+}
+
+// Snapshots wherever the current player's shot actually ended up, so it's exactly where they'll
+// resume from next time the rotation reaches them.
+function saveCurrentPlayerBallState() {
+  var p = currentPlayer();
+  if (!p) return;
+  p.strokes = strokesThisHole;
+  p.ballPos = { x: ballBody.position.x, y: ballBody.position.y, z: ballBody.position.z };
+}
+
+function nextPlayerIndex() {
+  for (var step = 1; step <= players.length; step++) {
+    var idx = (currentPlayerIdx + step) % players.length;
+    if (!players[idx].finishedHole) return idx;
+  }
+  return -1; // everyone has holed out this hole
+}
+
+function recomputeAimFromBallPos() {
+  var toPinDx = HOLE_POS.x - ballBody.position.x, toPinDz = HOLE_POS.z - ballBody.position.z;
+  HOLE_DISTANCE = Math.hypot(toPinDx, toPinDz) || 1;
+  FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
+  RIGHT = { x: -FWD.z, z: FWD.x };
+  aimOffsetDeg = 0;
+  document.getElementById("aimVal").textContent = "0°";
+}
+
+// Puts the single shared ball body wherever the now-current player's own lie last left it
+// (or the tee, if they haven't hit yet this hole), so the rotation feels like everyone playing
+// their own ball rather than one ball being handed around.
+function loadPlayerTurn() {
+  var p = currentPlayer();
+  strokesThisHole = p.strokes;
+  els.strokes.textContent = strokesThisHole;
+  var pos = p.ballPos || { x: TEE_POS.x, y: BALL_RADIUS + 0.02, z: TEE_POS.z };
+  ballBody.position.set(pos.x, pos.y, pos.z);
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  ballMesh.position.copy(ballBody.position);
+  ballMesh.visible = true;
+  settled = true;
+  cameraMode = "tee";
+  recomputeAimFromBallPos();
+  updateTurnHud();
+  updatePlayersPanel();
+  broadcastTurn();
+}
+
+function startNextHoleForAll(idx) {
+  players.forEach(function (p) { p.finishedHole = false; p.strokes = 0; p.ballPos = null; });
+  currentPlayerIdx = 0;
+  loadHole(idx); // resets ball to the new hole's tee via resetBall()
+  updateTurnHud();
+  updatePlayersPanel();
+  broadcastTurn();
+}
+
+function advanceTurn() {
+  var next = nextPlayerIndex();
+  if (next === -1) {
+    if (currentHoleIdx + 1 < roundHoles.length) {
+      setTimeout(function () { startNextHoleForAll(currentHoleIdx + 1); }, 2200);
+    } else {
+      setTimeout(showRoundSummary, 1400);
+    }
+    return;
+  }
+  currentPlayerIdx = next;
+  loadPlayerTurn();
+}
 
 function loadHole(idx) {
   currentHoleIdx = idx;
@@ -685,45 +867,59 @@ function scoreLabel(strokes, par) {
 }
 
 function onHoleComplete() {
-  scorecard.push({ hole: currentHoleIdx + 1, par: currentPar, strokes: strokesThisHole });
+  var p = currentPlayer();
+  p.finishedHole = true;
+  p.strokes = strokesThisHole;
+  p.holeScores[currentHoleIdx] = { hole: currentHoleIdx + 1, par: currentPar, strokes: strokesThisHole };
+  p.ballPos = { x: ballBody.position.x, y: ballBody.position.y, z: ballBody.position.z };
   settled = true;
   cameraMode = "result";
 
   var label = scoreLabel(strokesThisHole, currentPar);
-  els.shotLine.textContent = "Holed in " + strokesThisHole + " · " + label;
+  els.shotLine.textContent = (players.length > 1 ? p.name + " holed in " : "Holed in ") + strokesThisHole + " · " + label;
+  updatePlayersPanel();
 
-  if (currentHoleIdx + 1 < roundHoles.length) {
-    setTimeout(function () { loadHole(currentHoleIdx + 1); }, 2600);
-  } else {
-    setTimeout(showRoundSummary, 1400);
-  }
+  setTimeout(advanceTurn, 1800);
 }
 
 function showRoundSummary() {
-  var totalStrokes = scorecard.reduce(function (s, h) { return s + h.strokes; }, 0);
-  var totalPar = scorecard.reduce(function (s, h) { return s + h.par; }, 0);
-  var lines = scorecard.map(function (h) {
-    return "Hole " + h.hole + ": " + h.strokes + " (par " + h.par + ", " + scoreLabel(h.strokes, h.par) + ")";
+  var sorted = players.slice().sort(function (a, b) { return playerTotal(a) - playerTotal(b); });
+  var lines = sorted.map(function (p, i) {
+    var total = playerTotal(p);
+    var totalPar = p.holeScores.reduce(function (s, h) { return s + (h ? h.par : 0); }, 0);
+    var diff = total - totalPar;
+    return (i + 1) + ". " + p.name + ": " + total + " (" + (diff >= 0 ? "+" : "") + diff + ")";
   });
   document.getElementById("summaryLines").innerHTML = lines.join("<br>");
-  document.getElementById("summaryTotal").textContent = totalStrokes + " (" + (totalStrokes - totalPar >= 0 ? "+" : "") + (totalStrokes - totalPar) + ")";
+  document.getElementById("summaryTotal").textContent = players.length > 1
+    ? sorted[0].name + " wins!"
+    : playerTotal(sorted[0]) + " total";
   document.getElementById("roundSummary").classList.add("show");
 
   // Keeps the door open for leaderboards later — just persisting results for now, no UI reads
-  // this back yet.
+  // this back yet. Each player's round is its own row (the rounds table has a player_name
+  // column precisely so a multi-player round doesn't need a schema change to be recorded).
   if (loadedCourseId) {
-    fetch(SUPABASE_URL + "/rest/v1/rounds", {
-      method: "POST",
-      headers: Object.assign({ "Content-Type": "application/json" }, { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }),
-      body: JSON.stringify([{ course_id: loadedCourseId, hole_scores: scorecard, total_strokes: totalStrokes, total_par: totalPar, completed: true }])
-    }).catch(function () { /* best-effort */ });
+    players.forEach(function (p) {
+      var totalStrokes = playerTotal(p);
+      var totalPar = p.holeScores.reduce(function (s, h) { return s + (h ? h.par : 0); }, 0);
+      fetch(SUPABASE_URL + "/rest/v1/rounds", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }),
+        body: JSON.stringify([{ course_id: loadedCourseId, player_name: p.name, hole_scores: p.holeScores, total_strokes: totalStrokes, total_par: totalPar, completed: true }])
+      }).catch(function () { /* best-effort */ });
+    });
   }
 }
 
 document.getElementById("playAgain").addEventListener("click", function () {
-  scorecard = [];
   document.getElementById("roundSummary").classList.remove("show");
+  players.forEach(function (p) { p.holeScores = []; p.finishedHole = false; p.strokes = 0; p.ballPos = null; });
+  currentPlayerIdx = 0;
   loadHole(0);
+  updateTurnHud();
+  updatePlayersPanel();
+  broadcastTurn();
 });
 
 // ---- Ball + physics + gameplay bootstrap ----
@@ -794,6 +990,9 @@ function resetBall() {
   els.strokes.textContent = 0;
   els.toPin.innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
   document.getElementById("holeLength").innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
+  // Otherwise the next turn switch would restore this player's stale pre-reset position/stroke
+  // count from players[], silently undoing the manual reset once the rotation comes back around.
+  if (currentPlayer()) { saveCurrentPlayerBallState(); currentPlayer().finishedHole = false; }
 }
 
 // ---- Minimap ----
@@ -1116,7 +1315,6 @@ function resolveWaterPenalty(choice) {
   ballMesh.position.copy(ballBody.position);
   ballMesh.visible = true;
   settled = true;
-  cameraMode = "tee";
 
   var toPinFromDrop = Math.hypot(HOLE_POS.x - dropPos.x, HOLE_POS.z - dropPos.z);
   els.lastShot.innerHTML = "Water<span class=\"unit\">, +1</span>";
@@ -1125,14 +1323,10 @@ function resolveWaterPenalty(choice) {
     ? "Re-teed after a splash, +1 stroke"
     : "Dropped at the entry point, +1 stroke";
 
-  // Same aim-recompute every other post-shot rest does — aim 0 should always mean "straight at
-  // the pin from here."
-  var toPinDx = HOLE_POS.x - dropPos.x, toPinDz = HOLE_POS.z - dropPos.z;
-  HOLE_DISTANCE = toPinFromDrop || 1;
-  FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
-  RIGHT = { x: -FWD.z, z: FWD.x };
-  aimOffsetDeg = 0;
-  document.getElementById("aimVal").textContent = "0°";
+  // Choosing how to continue after a splash still uses up this player's turn, same as any
+  // other shot — the rotation moves on rather than letting them go again immediately.
+  saveCurrentPlayerBallState();
+  setTimeout(advanceTurn, 1000);
 }
 
 // ---- Aim ----
@@ -1371,6 +1565,9 @@ function connect() {
   socket.onopen = function () {
     els.status.classList.add("live");
     els.statusText.textContent = "Live";
+    // A fresh connection has no room yet — this laptop is always the host, so it asks the
+    // relay for a room code immediately rather than waiting to be told to.
+    socket.send(JSON.stringify({ type: "host_create" }));
   };
   socket.onclose = function () {
     els.status.classList.remove("live");
@@ -1383,7 +1580,40 @@ function connect() {
   socket.onmessage = function (ev) {
     try {
       var msg = JSON.parse(ev.data);
+
+      if (msg.type === "room_created") {
+        roomCode = msg.code;
+        document.getElementById("lobbyRoomCode").textContent = msg.code;
+        return;
+      }
+      if (msg.type === "roster") {
+        roster = msg.players || [];
+        renderLobbyRoster();
+        return;
+      }
+      if (msg.type === "club") {
+        // Tracked from the moment a phone joins (it syncs its club right after "joined",
+        // before any round has started) so the HUD shows the right club the instant the
+        // rotation reaches a player, not just after their first swing. rosterClubs survives
+        // across the lobby -> round-started transition; players[] doesn't exist yet in the
+        // lobby, so it can't hold this itself.
+        rosterClubs[msg.playerId] = msg.clubName || null;
+        if (roundStarted && currentPlayer() && msg.playerId === currentPlayer().id) {
+          currentPlayer().lastClubName = msg.clubName || null;
+          els.clubName.textContent = msg.clubName || "–";
+          document.getElementById("turnPanelClub").textContent = msg.clubName || "";
+        }
+        return;
+      }
+
+      // Every message past this point comes from a specific joined player and only matters
+      // once the round is actually running.
+      if (!roundStarted) return;
+
       if (msg.type === "swing") {
+        // Only the player whose turn it is can affect the shared ball — the phone already
+        // gates this on its own side, this is the backstop in case a stale client still sends.
+        if (!currentPlayer() || msg.playerId !== currentPlayer().id) return;
         if (!settled) {
           // Ball's still moving from the last shot — ignore this one rather than stack a new
           // velocity onto an already-live physics body mid-roll.
@@ -1394,20 +1624,37 @@ function connect() {
         els.powerState.classList.remove("practice");
         launchShot(msg);
       } else if (msg.type === "practice") {
+        if (!currentPlayer() || msg.playerId !== currentPlayer().id) return;
         showPracticeSwing(msg);
       } else if (msg.type === "power") {
+        if (!currentPlayer() || msg.playerId !== currentPlayer().id) return;
         els.powerState.textContent = msg.power > 4 ? "Swinging" : "Armed";
         setPowerBar(msg.power, true);
-      } else if (msg.type === "club") {
-        // The phone broadcasts this on every club change (and once on connect) so the laptop
-        // HUD always shows what's actually selected, not just whatever the last shot used.
-        els.clubName.textContent = msg.clubName || "–";
       }
     } catch (e) { /* ignore malformed frames */ }
   };
 }
 els.connectBtn.addEventListener("click", connect);
 document.getElementById("reset").addEventListener("click", resetBall);
+
+document.getElementById("startRoundBtn").addEventListener("click", function () {
+  if (!roster.length) return;
+  players = roster.map(function (p) {
+    return { id: p.id, name: p.name, strokes: 0, ballPos: null, finishedHole: false, holeScores: [], lastClubName: rosterClubs[p.id] || null };
+  });
+  currentPlayerIdx = 0;
+  roundStarted = true;
+  document.getElementById("lobbyOverlay").classList.remove("show");
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "start_round" }));
+  }
+  // The hole (and the ball, sitting at its tee) is already loaded and rendering behind the
+  // lobby from startGameplay()'s initial loadHole(0) — nothing to rebuild, just hand off the
+  // turn/HUD state now that there's an actual roster to hand it to.
+  updateTurnHud();
+  updatePlayersPanel();
+  broadcastTurn();
+});
 
 // ---- Animation loop ----
 // clock/resetBall/connect are all invoked from startGameplay() at the bottom of this file,
@@ -1470,32 +1717,19 @@ function animate() {
           var toPinFromDrop = Math.hypot(HOLE_POS.x - shotStartPos.x, HOLE_POS.z - shotStartPos.z);
           els.toPin.innerHTML = toPinFromDrop.toFixed(1) + '<span class="unit">m</span>';
           els.shotLine.textContent = "Out of bounds! Replayed from the same spot, +1 stroke";
-          setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
         } else {
           var dx = ballBody.position.x - shotStartPos.x;
           var dz = ballBody.position.z - shotStartPos.z;
           var carried = Math.sqrt(dx * dx + dz * dz);
           els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
           els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
-          // FWD/RIGHT were only ever computed once, from the original tee position, and never
-          // updated as the ball moved -- so "aim 0" on shot 2+ was still replaying the ORIGINAL
-          // tee-to-pin bearing, not a fresh one from wherever this shot actually landed. Any
-          // curve on shot 1 left the ball off that original line, and shot 2 would keep firing
-          // along the same stale heading -- further from the pin's real bearing, not toward it.
-          // Recompute from the ball's actual resting position so aim 0 always means "straight at
-          // the pin from here," and reset aim for the new shot rather than carrying over the last
-          // one's adjustment. TEE_POS is deliberately left alone -- it's the hole's real tee
-          // marker for the minimap, not "wherever the ball currently is."
-          var toPinDx = HOLE_POS.x - ballBody.position.x, toPinDz = HOLE_POS.z - ballBody.position.z;
-          HOLE_DISTANCE = Math.hypot(toPinDx, toPinDz) || 1;
-          FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
-          RIGHT = { x: -FWD.z, z: FWD.x };
-          aimOffsetDeg = 0;
-          document.getElementById("aimVal").textContent = "0°";
-          // Aiming has to come back for every shot, not just the tee shot — after a moment to
-          // see where this one landed, hand aim control back for the next one.
-          setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
         }
+        // Each shot ends this player's turn, whether it was a clean roll or a penalty — the
+        // rotation moves on to whoever's next, same as a real group playing a hole together.
+        // (aim/FWD/RIGHT get recomputed fresh in loadPlayerTurn for whoever's up next, rather
+        // than here for a player whose turn is now over.)
+        saveCurrentPlayerBallState();
+        setTimeout(advanceTurn, 1300);
       }
     }
   }
