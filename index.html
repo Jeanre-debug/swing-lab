@@ -510,6 +510,11 @@
   // Full-scale net-acceleration reading (m/s^2) mapped to a 100-point power score.
   // Rough guess from a hand swing's accelerometer delta — tune once real swings are logged.
   var POWER_SCALE = 26;
+  // A backswing has its own rise-then-settle (especially the pause at the top), which on its
+  // own crosses armThreshold and then falls — indistinguishable from post-impact deceleration
+  // by fall-count alone. Requiring the peak to clearly clear the backswing's scale before it
+  // can count as impact is what keeps that settle from being mistaken for the finish.
+  var IMPACT_GATE_MULTIPLIER = 2.0;
   // Accumulated yaw / roll (deg) below which path / face reads as "square" — tune from real swings.
   var PATH_EPS = 14;
   var FACE_EPS = 8;
@@ -699,7 +704,7 @@
       if (stalled) {
         state = "ready";
         setPhase("ARMED — SWING", "armed");
-      } else if (fallCount >= 3 && (t - swingPeak.t) < 500) {
+      } else if (fallCount >= 3 && (t - swingPeak.t) < 500 && swingPeak.net > armThreshold * IMPACT_GATE_MULTIPLIER) {
         finalizeSwing(t);
       }
     } else if (state === "result") {
