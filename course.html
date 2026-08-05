@@ -934,6 +934,12 @@ function connect() {
     try {
       var msg = JSON.parse(ev.data);
       if (msg.type === "swing") {
+        if (!settled) {
+          // Ball's still moving from the last shot — ignore this one rather than stack a new
+          // velocity onto an already-live physics body mid-roll.
+          els.shotLine.textContent = "Wait for the ball to stop";
+          return;
+        }
         els.powerState.textContent = "Armed";
         els.powerState.classList.remove("practice");
         launchShot(msg);
@@ -983,16 +989,20 @@ function animate() {
         var carried = Math.sqrt(dx * dx + dz * dz);
         els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
         els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
+        // Aiming has to come back for every shot, not just the tee shot — after a moment to
+        // see where this one landed, hand aim control back for the next one.
+        setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
       }
     }
   }
 
-  // Camera — offset behind the tee/ball along -FWD (i.e. back toward where the golfer stands)
-  // and looking forward along +FWD, so this works the same regardless of hole orientation.
+  // Camera — "tee" here really means "ball at rest, aiming the next shot", which applies
+  // after every shot, not just the first — so this frames from the ball's current position,
+  // not the hole's actual tee (which subsequent shots aren't played from).
   if (cameraMode === "tee") {
-    var teeCamPos = new THREE.Vector3(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
+    var teeCamPos = new THREE.Vector3(ballMesh.position.x - FWD.x * 7, ballMesh.position.y + 2.6, ballMesh.position.z - FWD.z * 7);
     camera.position.lerp(teeCamPos, 0.08);
-    camera.lookAt(TEE_POS.x + FWD.x * 25, 1, TEE_POS.z + FWD.z * 25);
+    camera.lookAt(ballMesh.position.x + FWD.x * 25, ballMesh.position.y + 1, ballMesh.position.z + FWD.z * 25);
   } else {
     var desired = new THREE.Vector3(ballMesh.position.x - FWD.x * 7, ballMesh.position.y + 3.2, ballMesh.position.z - FWD.z * 7);
     camera.position.lerp(desired, 0.06);
