@@ -230,6 +230,30 @@
   .lobby-roster-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--turf); flex-shrink: 0; }
   .lobby-empty { font-size: 12.5px; color: var(--muted); text-align: center; padding: 8px 0; }
 
+  .difficulty-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0 4px; }
+  .difficulty-btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 9px 4px;
+    border-radius: 8px;
+    text-align: center;
+    line-height: 1.25;
+  }
+  .difficulty-btn:focus-visible { outline: 2px solid var(--sand); }
+  .difficulty-btn.selected { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 18%, var(--panel-raised)); color: var(--paper); }
+  .difficulty-hint { font-size: 11.5px; color: var(--muted); text-align: center; min-height: 1.4em; }
+
+  .difficulty-tag {
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--sand); padding: 3px 2px 0;
+  }
+
   .players-panel { min-width: 180px; }
   .players-panel .player-row {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -263,6 +287,7 @@
       </div>
       <canvas id="minimap" width="168" height="230"></canvas>
       <div class="strokes-row"><span>Strokes</span><span id="strokes">0</span></div>
+      <div class="difficulty-tag" id="difficultyTag"></div>
     </div>
 
     <a class="panel builder-link" href="builder.html" target="_blank" rel="noopener">Course Builder &rarr;</a>
@@ -306,6 +331,11 @@
     <div class="lobby-roster" id="lobbyRoster">
       <div class="lobby-empty">Waiting for players to join&hellip;</div>
     </div>
+
+    <div class="eyebrow">Difficulty</div>
+    <div class="difficulty-grid" id="difficultyGrid"></div>
+    <div class="difficulty-hint" id="difficultyHint"></div>
+
     <button class="btn primary" id="startRoundBtn" disabled>Start Round</button>
   </div>
 </div>
@@ -718,6 +748,39 @@ var rosterClubs = {}; // playerId -> clubName, tracked from the moment they join
 var players = []; // built from roster when Start Round is clicked: [{id, name, strokes, ballPos, finishedHole, holeScores, lastClubName}]
 var currentPlayerIdx = 0;
 var roundStarted = false;
+
+// ---- Difficulty: how much a swing's actual face angle/path affect the shot ----
+// At 0 (Perfect Swing) the ball always starts and flies dead straight down the aim line —
+// only power (and loft/lie) decide the outcome. At 1 (Scottie Scheffler) it's the full
+// real-physics sensitivity this game already had before difficulty levels existed at all.
+// Everything between is a straight-line interpolation, not separately tuned per level —
+// an even easier lever to retune later than most constants in this project.
+var DIFFICULTY_LEVELS = [
+  { id: "perfect", label: "Perfect Swing", mult: 0 },
+  { id: "amateur", label: "Amateur", mult: 0.35 },
+  { id: "semipro", label: "Semi Pro", mult: 0.6 },
+  { id: "pro", label: "Pro", mult: 0.85 },
+  { id: "scottie", label: "Scottie Scheffler", mult: 1.0 }
+];
+var difficultyIdx = 1; // Amateur — a friendlier default than full sensitivity for a first game
+
+function renderDifficultyGrid() {
+  document.getElementById("difficultyGrid").innerHTML = DIFFICULTY_LEVELS.map(function (d, i) {
+    return '<button class="difficulty-btn' + (i === difficultyIdx ? " selected" : "") + '" data-idx="' + i + '">' + d.label + "</button>";
+  }).join("");
+  document.getElementById("difficultyHint").textContent = difficultyIdx === 0
+    ? "Face angle and path don't affect the shot at all — pure power and aim."
+    : "Face angle and path matter " + Math.round(DIFFICULTY_LEVELS[difficultyIdx].mult * 100) + "% as much as a real swing.";
+  var tag = document.getElementById("difficultyTag");
+  if (tag) tag.textContent = DIFFICULTY_LEVELS[difficultyIdx].label;
+}
+document.getElementById("difficultyGrid").addEventListener("click", function (e) {
+  var btn = e.target.closest(".difficulty-btn");
+  if (!btn) return;
+  difficultyIdx = parseInt(btn.dataset.idx, 10);
+  renderDifficultyGrid();
+});
+renderDifficultyGrid();
 
 function currentPlayer() { return players[currentPlayerIdx] || null; }
 
@@ -1466,13 +1529,14 @@ function launchShot(shot) {
   // right), so handSign flips it again — mirrors the righty logic, not itself verified on a
   // real left-handed swing.
   var handSign = shot.hand === "L" ? -1 : 1;
-  var startAngleDeg = clamp(-handSign * faceVal * START_ANGLE_SCALE, -32, 32);
+  var difficultyMult = DIFFICULTY_LEVELS[difficultyIdx].mult;
+  var startAngleDeg = clamp(-handSign * faceVal * START_ANGLE_SCALE * difficultyMult, -32, 32);
   // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
   // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
   var curveMultiplier = clamp(12 / loftDeg, 0.2, 1.3);
   if (trajectory === "stinger") curveMultiplier *= 0.5;
   else if (trajectory === "high") curveMultiplier *= 1.2;
-  flightCurveStrength = clamp(-handSign * (faceVal - pathVal) * CURVE_SCALE * curveMultiplier, -1, 1);
+  flightCurveStrength = clamp(-handSign * (faceVal - pathVal) * CURVE_SCALE * curveMultiplier * difficultyMult, -1, 1);
 
   var angleRad = startAngleDeg * DEG2RAD;
   var loftRad = loftDeg * DEG2RAD;
