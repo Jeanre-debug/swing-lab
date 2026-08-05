@@ -641,6 +641,13 @@
       </button>
     </div>
 
+    <div class="club-row">
+      <span class="label">Trajectory</span>
+      <button class="club-pill" id="trajToggle">
+        <span class="club-name" id="trajToggleLabel">Normal</span>
+      </button>
+    </div>
+
     <button id="action">Tap to Begin</button>
     <div class="hint" id="hint">Hold the phone like a club grip, then keep it still while it calibrates.</div>
   </div>
@@ -724,6 +731,8 @@
     socket.onopen = function () {
       els.wsStatus.classList.add("live");
       els.wsStatusText.textContent = "Live";
+      var club = CLUBS[selectedClubIndex];
+      socket.send(JSON.stringify({ type: "club", clubName: club.name, loftDeg: club.loft }));
     };
     socket.onclose = function () {
       els.wsStatus.classList.remove("live");
@@ -767,6 +776,24 @@
     isLefty = !isLefty;
     localStorage.setItem("swingLabLefty", isLefty ? "1" : "0");
     applyHandUI();
+  });
+
+  // A stinger is a real, deliberately low, boring shot with less curve than normal (less spin
+  // relative to speed); "high" is the opposite. Doesn't change anything about swing detection —
+  // just tells course.html to bias the loft/curve it applies for this shot.
+  var TRAJECTORIES = ["normal", "stinger", "high"];
+  var TRAJECTORY_LABELS = { normal: "Normal", stinger: "Stinger", high: "High" };
+  var trajectoryIndex = 0;
+  var trajEls = { toggle: $("trajToggle"), label: $("trajToggleLabel") };
+  function applyTrajUI() {
+    var traj = TRAJECTORIES[trajectoryIndex];
+    trajEls.label.textContent = TRAJECTORY_LABELS[traj];
+    trajEls.toggle.classList.toggle("toggle-on", traj !== "normal");
+  }
+  applyTrajUI();
+  trajEls.toggle.addEventListener("click", function () {
+    trajectoryIndex = (trajectoryIndex + 1) % TRAJECTORIES.length;
+    applyTrajUI();
   });
 
   // Streams a live power readout to the laptop (its power bar) and updates the on-phone swing
@@ -886,6 +913,10 @@
     var club = CLUBS[selectedClubIndex];
     pk.pillName.textContent = club.name;
     pk.pillLoft.innerHTML = clubInfoText(club);
+    // Lets the laptop show the club you're about to hit, not just the one from your last shot.
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "club", clubName: club.name, loftDeg: club.loft }));
+    }
   }
 
   pk.pill.addEventListener("click", function () {
@@ -1281,6 +1312,7 @@
       power: power, pathVal: pathVal, faceVal: faceVal, tempo: tempoRatio, shot: shotName,
       club: club.id, clubName: club.name, loftDeg: club.loft, speedMult: club.speedMult,
       hand: isLefty ? "L" : "R",
+      trajectory: TRAJECTORIES[trajectoryIndex],
       type: practiceMode ? "practice" : "swing"
     });
 

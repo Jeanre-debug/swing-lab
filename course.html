@@ -80,6 +80,8 @@
   .readout .label { font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
   .readout .val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; margin-top: 2px; }
   .readout .val .unit { font-size: 12px; color: var(--muted); font-weight: 500; margin-left: 3px; }
+  .readout .val.club-val { font-family: var(--sans); font-size: 16px; white-space: nowrap; }
+  .readout .val.club-val .traj-tag { font-family: var(--sans); font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sand); margin-left: 6px; }
 
   .shot-line {
     font-family: var(--mono);
@@ -219,6 +221,10 @@
 
   <div class="panel readout-stack">
     <div class="readout">
+      <div class="label">Club</div>
+      <div class="val club-val" id="clubName">–</div>
+    </div>
+    <div class="readout">
       <div class="label">To Pin</div>
       <div class="val" id="toPin">–<span class="unit">m</span></div>
     </div>
@@ -346,6 +352,31 @@ function clearHoleGroup() {
   }
 }
 
+// ---- Terrain lookup, for real hazard behavior (not just visual tile color) ----
+// null for the default hardcoded hole, which has no tile data — tileTypeAt approximates it
+// geometrically instead (a fairway strip between tee and pin, a green disc near the pin).
+var currentTileGrid = null;
+var currentTileMeta = null; // {cols, rows, tileSize}
+
+function tileTypeAt(worldX, worldZ) {
+  if (currentTileGrid && currentTileMeta) {
+    var cols = currentTileMeta.cols, rows = currentTileMeta.rows, ts = currentTileMeta.tileSize;
+    var tx = Math.round(worldX / ts + cols / 2);
+    var ty = Math.round(-worldZ / ts);
+    if (ty < 0 || ty >= rows || tx < 0 || tx >= cols) return "rough";
+    return currentTileGrid[ty][tx] || "rough";
+  }
+  if (Math.hypot(worldX - HOLE_POS.x, worldZ - HOLE_POS.z) < 9) return "green";
+  var relX = worldX - TEE_POS.x, relZ = worldZ - TEE_POS.z;
+  var alongDist = relX * FWD.x + relZ * FWD.z;
+  var perpDist = Math.abs(relX * RIGHT.x + relZ * RIGHT.z);
+  if (alongDist >= -5 && alongDist <= HOLE_DISTANCE + 5 && perpDist <= DEFAULT_FAIRWAY_WIDTH / 2) return "fairway";
+  return "rough";
+}
+
+// Real, not just cosmetic: what you're hitting FROM changes how much speed the shot keeps.
+var TERRAIN_SPEED_MULT = { fairway: 1.0, green: 1.0, rough: 0.82, bunker: 0.55, water: 1.0, tree: 0.7 };
+
 // Shared between both hole builders below.
 function addHoleAndFlag(pos) {
   var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
@@ -373,6 +404,8 @@ function addTeeMarkers(pos, right) {
 
 // ---- Hole builder A: the Phase 1 hardcoded hole (no course id in the URL) ----
 function buildDefaultHole() {
+  currentTileGrid = null;
+  currentTileMeta = null;
   setHoleVectors({ x: 0, z: 6 }, { x: 0, z: 6 - 150 });
 
   function makeGround(width, length, segX, segZ, amplitude, color, z) {
@@ -466,6 +499,9 @@ function buildTileHole(course) {
   (course.tiles || []).forEach(function (t) {
     if (grid[t.y] && t.x >= 0 && t.x < cols) grid[t.y][t.x] = t.type;
   });
+
+  currentTileGrid = grid;
+  currentTileMeta = { cols: cols, rows: rows, tileSize: tileSize };
 
   var byType = {};
   var treeCells = [];
@@ -765,6 +801,73 @@ var cameraMode = "tee"; // tee | flight | result
 var shotRight = { x: 1, z: 0 }; // RIGHT used by the shot in flight, captured at launch (see aim below)
 var shotFwd = { x: 0, z: -1 }; // FWD used by the shot in flight, captured at launch alongside shotRight
 
+// ---- Ball trail: a fading line tracing this shot's actual flight/roll path ----
+var TRAIL_MAX_POINTS = 400;
+var trailPositions = new Float32Array(TRAIL_MAX_POINTS * 3);
+var trailGeometry = new THREE.BufferGeometry();
+trailGeometry.setAttribute("position", new THREE.BufferAttribute(trailPositions, 3));
+trailGeometry.setDrawRange(0, 0);
+var trailLine = new THREE.Line(trailGeometry, new THREE.LineBasicMaterial({ color: 0xfff4d1, transparent: true, opacity: 0.8 }));
+trailLine.frustumCulled = false;
+scene.add(trailLine);
+var trailPointCount = 0;
+var lastTrailPoint = null;
+
+function resetTrail() {
+  trailPointCount = 0;
+  lastTrailPoint = null;
+  trailGeometry.setDrawRange(0, 0);
+}
+
+function pushTrailPoint(x, y, z) {
+  // Distance-gated rather than one-point-per-frame — a slow roll shouldn't burn through the
+  // point budget before the ball even stops, and a long airborne shot shouldn't run out either.
+  if (lastTrailPoint && Math.hypot(x - lastTrailPoint.x, y - lastTrailPoint.y, z - lastTrailPoint.z) < 0.2) return;
+  if (trailPointCount >= TRAIL_MAX_POINTS) return;
+  var i = trailPointCount * 3;
+  trailPositions[i] = x; trailPositions[i + 1] = y; trailPositions[i + 2] = z;
+  trailPointCount++;
+  trailGeometry.setDrawRange(0, trailPointCount);
+  trailGeometry.attributes.position.needsUpdate = true;
+  lastTrailPoint = { x: x, y: y, z: z };
+}
+
+// ---- Contact-quality burst: a quick expanding ring at address when a shot launches, colored
+// by whether the swing classification was a clean shot or a miss ----
+var GOOD_SHOT_LABELS = { STRAIGHT: true, DRAW: true, FADE: true };
+var burstRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.4, 0.58, 32),
+  new THREE.MeshBasicMaterial({ color: 0x8ee06a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+);
+burstRing.rotation.x = -Math.PI / 2;
+burstRing.visible = false;
+scene.add(burstRing);
+var burstActive = false, burstStartT = 0;
+var BURST_DURATION = 0.55; // seconds
+
+function triggerContactBurst(x, z, shotLabel) {
+  var good = GOOD_SHOT_LABELS[shotLabel] === true;
+  burstRing.material.color.set(good ? 0x8ee06a : 0xe0664a);
+  burstRing.position.set(x, 0.08, z);
+  burstRing.scale.setScalar(1);
+  burstRing.material.opacity = 0.9;
+  burstRing.visible = true;
+  burstActive = true;
+  burstStartT = clock.getElapsedTime();
+}
+
+function updateContactBurst() {
+  if (!burstActive) return;
+  var p = (clock.getElapsedTime() - burstStartT) / BURST_DURATION;
+  if (p >= 1) {
+    burstActive = false;
+    burstRing.visible = false;
+    return;
+  }
+  burstRing.scale.setScalar(1 + p * 5);
+  burstRing.material.opacity = 0.9 * (1 - p);
+}
+
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // ---- Aim ----
@@ -847,6 +950,12 @@ function launchShot(shot) {
   var faceVal = shot.faceVal || 0;
   var loftDeg = shot.loftDeg || DEFAULT_LOFT;
   var speedMult = shot.speedMult || DEFAULT_SPEED_MULT;
+  var trajectory = shot.trajectory || "normal";
+  // A stinger is punched well under the club's normal loft — flighted low on purpose, so it
+  // curves less (less spin) and runs out further once it lands. A high/lob shot goes the other
+  // way: ballooned up near lob-wedge height, with more time in the air for any curve to develop.
+  if (trajectory === "stinger") loftDeg = Math.min(loftDeg, 6);
+  else if (trajectory === "high") loftDeg = Math.min(loftDeg * 1.4, 58);
 
   // Real stroke play now — each shot plays on from wherever the last one settled, rather than
   // resetting to the tee every time (that made sense for Phase 1's driving-range loop, but
@@ -866,12 +975,21 @@ function launchShot(shot) {
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
+  resetTrail();
+  pushTrailPoint(ballBody.position.x, ballBody.position.y, ballBody.position.z);
+  triggerContactBurst(ballBody.position.x, ballBody.position.z, shot.shot);
+
+  // What you're hitting FROM matters: a lie in the rough robs speed off the strike, a bunker
+  // robs a lot more. Looked up from the tile the ball is resting on at address, not where it
+  // lands — the terrain under your feet at impact is what saps the shot, not the landing spot.
+  var lieType = tileTypeAt(ballBody.position.x, ballBody.position.z);
+  var lieSpeedMult = TERRAIN_SPEED_MULT[lieType] || 1.0;
 
   var aim = rotateBasis(aimOffsetDeg);
   shotRight = aim.right;
   shotFwd = aim.fwd;
 
-  var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult;
+  var speed = (BASE_MIN_SPEED + (power / 100) * (BASE_MAX_SPEED - BASE_MIN_SPEED)) * speedMult * lieSpeedMult;
   // shotRight is the golfer's right after aim (perpendicular to the aimed direction). On the
   // phone, positive faceVal means CLOSED, which for a right-handed golfer starts/curves the
   // ball LEFT — so both terms need the sign flipped to land in the correct direction here.
@@ -883,6 +1001,8 @@ function launchShot(shot) {
   // Higher-lofted clubs impart more backspin relative to sidespin, so they curve less in
   // real golf — a driver (10.5°) curves noticeably, a lob wedge (60°) barely at all.
   var curveMultiplier = clamp(12 / loftDeg, 0.2, 1.3);
+  if (trajectory === "stinger") curveMultiplier *= 0.5;
+  else if (trajectory === "high") curveMultiplier *= 1.2;
   flightCurveStrength = clamp(-handSign * (faceVal - pathVal) * CURVE_SCALE * curveMultiplier, -1, 1);
 
   var angleRad = startAngleDeg * DEG2RAD;
@@ -898,10 +1018,14 @@ function launchShot(shot) {
 
   els.lastShot.innerHTML = "–<span class=\"unit\">m</span>";
   var line = shot.clubName ? shot.clubName : "";
+  if (trajectory !== "normal") line += (line ? " · " : "") + TRAJECTORY_LABELS[trajectory];
   if (shot.shot) line += (line ? " · " : "") + shot.shot;
   line += (line ? " · " : "") + "PWR " + Math.round(power);
   els.shotLine.textContent = line;
+  if (shot.clubName) els.clubName.textContent = shot.clubName;
 }
+
+var TRAJECTORY_LABELS = { stinger: "Stinger", high: "High" };
 
 // ---- WebSocket ----
 var els = {
@@ -910,6 +1034,7 @@ var els = {
   serverUrl: document.getElementById("serverUrl"),
   connectBtn: document.getElementById("connectBtn"),
   toPin: document.getElementById("toPin"),
+  clubName: document.getElementById("clubName"),
   lastShot: document.getElementById("lastShot"),
   shotLine: document.getElementById("shotLine"),
   powerFill: document.getElementById("powerFill"),
@@ -992,6 +1117,10 @@ function connect() {
       } else if (msg.type === "power") {
         els.powerState.textContent = msg.power > 4 ? "Swinging" : "Armed";
         setPowerBar(msg.power, true);
+      } else if (msg.type === "club") {
+        // The phone broadcasts this on every club change (and once on connect) so the laptop
+        // HUD always shows what's actually selected, not just whatever the last shot used.
+        els.clubName.textContent = msg.clubName || "–";
       }
     } catch (e) { /* ignore malformed frames */ }
   };
@@ -1020,6 +1149,7 @@ function animate() {
   ballMesh.quaternion.copy(ballBody.quaternion);
 
   if (!settled) {
+    pushTrailPoint(ballBody.position.x, ballBody.position.y, ballBody.position.z);
     var toPinNow = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
     if (toPinNow < CUP_RADIUS && ballBody.position.y < BALL_RADIUS + 0.3) {
       onHoleComplete();
@@ -1028,29 +1158,47 @@ function animate() {
       if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
         settled = true;
         cameraMode = "result";
-        var dx = ballBody.position.x - shotStartPos.x;
-        var dz = ballBody.position.z - shotStartPos.z;
-        var carried = Math.sqrt(dx * dx + dz * dz);
-        els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
-        els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
-        // FWD/RIGHT were only ever computed once, from the original tee position, and never
-        // updated as the ball moved -- so "aim 0" on shot 2+ was still replaying the ORIGINAL
-        // tee-to-pin bearing, not a fresh one from wherever this shot actually landed. Any
-        // curve on shot 1 left the ball off that original line, and shot 2 would keep firing
-        // along the same stale heading -- further from the pin's real bearing, not toward it.
-        // Recompute from the ball's actual resting position so aim 0 always means "straight at
-        // the pin from here," and reset aim for the new shot rather than carrying over the last
-        // one's adjustment. TEE_POS is deliberately left alone -- it's the hole's real tee
-        // marker for the minimap, not "wherever the ball currently is."
-        var toPinDx = HOLE_POS.x - ballBody.position.x, toPinDz = HOLE_POS.z - ballBody.position.z;
-        HOLE_DISTANCE = Math.hypot(toPinDx, toPinDz) || 1;
-        FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
-        RIGHT = { x: -FWD.z, z: FWD.x };
-        aimOffsetDeg = 0;
-        document.getElementById("aimVal").textContent = "0°";
-        // Aiming has to come back for every shot, not just the tee shot — after a moment to
-        // see where this one landed, hand aim control back for the next one.
-        setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
+
+        // Stroke-and-distance: a ball that comes to rest on a water tile never lay there in
+        // real golf — it's fished out under penalty and replayed from where this shot was hit.
+        // Simplest correct ruling for this physics model (no actual splash/sink simulation).
+        if (tileTypeAt(ballBody.position.x, ballBody.position.z) === "water") {
+          strokesThisHole++;
+          els.strokes.textContent = strokesThisHole;
+          ballBody.position.copy(shotStartPos);
+          ballBody.velocity.set(0, 0, 0);
+          ballBody.angularVelocity.set(0, 0, 0);
+          ballMesh.position.copy(ballBody.position);
+          els.lastShot.innerHTML = "Water<span class=\"unit\">, +1</span>";
+          var toPinFromDrop = Math.hypot(HOLE_POS.x - shotStartPos.x, HOLE_POS.z - shotStartPos.z);
+          els.toPin.innerHTML = toPinFromDrop.toFixed(1) + '<span class="unit">m</span>';
+          els.shotLine.textContent = "Splash! Replayed from the same spot, +1 stroke";
+          setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
+        } else {
+          var dx = ballBody.position.x - shotStartPos.x;
+          var dz = ballBody.position.z - shotStartPos.z;
+          var carried = Math.sqrt(dx * dx + dz * dz);
+          els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
+          els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
+          // FWD/RIGHT were only ever computed once, from the original tee position, and never
+          // updated as the ball moved -- so "aim 0" on shot 2+ was still replaying the ORIGINAL
+          // tee-to-pin bearing, not a fresh one from wherever this shot actually landed. Any
+          // curve on shot 1 left the ball off that original line, and shot 2 would keep firing
+          // along the same stale heading -- further from the pin's real bearing, not toward it.
+          // Recompute from the ball's actual resting position so aim 0 always means "straight at
+          // the pin from here," and reset aim for the new shot rather than carrying over the last
+          // one's adjustment. TEE_POS is deliberately left alone -- it's the hole's real tee
+          // marker for the minimap, not "wherever the ball currently is."
+          var toPinDx = HOLE_POS.x - ballBody.position.x, toPinDz = HOLE_POS.z - ballBody.position.z;
+          HOLE_DISTANCE = Math.hypot(toPinDx, toPinDz) || 1;
+          FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
+          RIGHT = { x: -FWD.z, z: FWD.x };
+          aimOffsetDeg = 0;
+          document.getElementById("aimVal").textContent = "0°";
+          // Aiming has to come back for every shot, not just the tee shot — after a moment to
+          // see where this one landed, hand aim control back for the next one.
+          setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
+        }
       }
     }
   }
@@ -1075,6 +1223,7 @@ function animate() {
     camera.lookAt(ballMesh.position.x + shotFwd.x * 6, ballMesh.position.y + 0.5, ballMesh.position.z + shotFwd.z * 6);
   }
 
+  updateContactBurst();
   drawMinimapFrame();
   updateAimTrail();
   renderer.render(scene, camera);
