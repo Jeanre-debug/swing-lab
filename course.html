@@ -339,8 +339,11 @@ function launchShot(shot) {
   shotStartPos = ballBody.position.clone();
 
   var speed = MIN_SPEED + (power / 100) * (MAX_SPEED - MIN_SPEED);
-  var startAngleDeg = clamp(faceVal * START_ANGLE_SCALE, -32, 32);
-  flightCurveStrength = clamp((faceVal - pathVal) * CURVE_SCALE, -1, 1);
+  // +X in this scene is the golfer's right (camera faces -Z toward the hole). On the phone,
+  // positive faceVal means CLOSED, which for a right-handed golfer starts/curves the ball
+  // LEFT (-X) — so both terms need the sign flipped to land in the correct direction here.
+  var startAngleDeg = clamp(-faceVal * START_ANGLE_SCALE, -32, 32);
+  flightCurveStrength = clamp(-(faceVal - pathVal) * CURVE_SCALE, -1, 1);
 
   var angleRad = startAngleDeg * DEG2RAD;
   var loftRad = LAUNCH_LOFT_DEG * DEG2RAD;
