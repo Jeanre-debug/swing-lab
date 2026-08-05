@@ -1026,6 +1026,21 @@ function animate() {
         var carried = Math.sqrt(dx * dx + dz * dz);
         els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
         els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
+        // FWD/RIGHT were only ever computed once, from the original tee position, and never
+        // updated as the ball moved -- so "aim 0" on shot 2+ was still replaying the ORIGINAL
+        // tee-to-pin bearing, not a fresh one from wherever this shot actually landed. Any
+        // curve on shot 1 left the ball off that original line, and shot 2 would keep firing
+        // along the same stale heading -- further from the pin's real bearing, not toward it.
+        // Recompute from the ball's actual resting position so aim 0 always means "straight at
+        // the pin from here," and reset aim for the new shot rather than carrying over the last
+        // one's adjustment. TEE_POS is deliberately left alone -- it's the hole's real tee
+        // marker for the minimap, not "wherever the ball currently is."
+        var toPinDx = HOLE_POS.x - ballBody.position.x, toPinDz = HOLE_POS.z - ballBody.position.z;
+        HOLE_DISTANCE = Math.hypot(toPinDx, toPinDz) || 1;
+        FWD = { x: toPinDx / HOLE_DISTANCE, z: toPinDz / HOLE_DISTANCE };
+        RIGHT = { x: -FWD.z, z: FWD.x };
+        aimOffsetDeg = 0;
+        document.getElementById("aimVal").textContent = "0°";
         // Aiming has to come back for every shot, not just the tee shot — after a moment to
         // see where this one landed, hand aim control back for the next one.
         setTimeout(function () { if (cameraMode === "result") cameraMode = "tee"; }, 1300);
