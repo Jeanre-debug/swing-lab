@@ -649,8 +649,9 @@
   };
 
   var WS_STORAGE_KEY = "swingLabServerUrl";
+  var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
   var socket = null;
-  els.wsUrl.value = localStorage.getItem(WS_STORAGE_KEY) || "";
+  els.wsUrl.value = localStorage.getItem(WS_STORAGE_KEY) || DEFAULT_WS_URL;
 
   function connectSocket() {
     var url = els.wsUrl.value.trim();

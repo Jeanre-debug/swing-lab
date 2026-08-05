@@ -908,7 +908,8 @@ var els = {
 };
 
 var STORAGE_KEY = "swingLabServerUrl";
-els.serverUrl.value = localStorage.getItem(STORAGE_KEY) || "";
+var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
+els.serverUrl.value = localStorage.getItem(STORAGE_KEY) || DEFAULT_WS_URL;
 
 // ---- Power bar ----
 // Driven live by "power" messages the phone streams throughout the swing (not just the final
