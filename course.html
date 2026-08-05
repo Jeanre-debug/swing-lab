@@ -98,6 +98,32 @@
   .minimap-length { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--sand); }
   .minimap-length .unit { font-size: 10px; color: var(--muted); margin-left: 2px; }
   canvas#minimap { display: block; border-radius: 8px; background: #2f5233; }
+  .strokes-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 2px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .strokes-row span:last-child { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 15px; color: var(--paper); font-weight: 700; letter-spacing: 0; text-transform: none; }
+
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(4, 8, 5, 0.65);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 30;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .overlay .modal { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 10px; }
+  .summary-lines { font-family: var(--mono); font-size: 13px; line-height: 1.7; color: var(--paper); }
+  .summary-total { font-size: 15px; font-weight: 700; color: var(--sand); padding-top: 6px; border-top: 1px solid var(--line); }
+  .btn {
+    appearance: none; border: 1px solid var(--line-strong); background: var(--panel-raised);
+    color: var(--paper); font-family: var(--sans); font-size: 12.5px; font-weight: 700;
+    padding: 10px 14px; border-radius: 8px;
+  }
+  .btn:focus-visible { outline: 2px solid var(--sand); }
+  .btn.primary { background: var(--turf); border-color: var(--turf); color: #06170d; }
 
   .bottom-stack {
     position: fixed;
@@ -170,10 +196,11 @@
 
     <div class="panel minimap-panel">
       <div class="minimap-head">
-        <span class="eyebrow">Hole · Par <span id="holePar">4</span></span>
+        <span class="eyebrow">Hole <span id="holeNum">1 / 1</span> · Par <span id="holePar">4</span></span>
         <span class="minimap-length" id="holeLength">–<span class="unit">m</span></span>
       </div>
       <canvas id="minimap" width="168" height="230"></canvas>
+      <div class="strokes-row"><span>Strokes</span><span id="strokes">0</span></div>
     </div>
   </div>
 
@@ -187,6 +214,15 @@
       <div class="val" id="lastShot">–<span class="unit">m</span></div>
       <div class="shot-line" id="shotLine"></div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="roundSummary">
+  <div class="modal panel">
+    <div class="eyebrow">Round Complete</div>
+    <div class="summary-lines" id="summaryLines"></div>
+    <div class="summary-total">Total: <span id="summaryTotal">–</span></div>
+    <button class="btn primary" id="playAgain">Play Again</button>
   </div>
 </div>
 
@@ -275,28 +311,50 @@ sun.shadow.camera.top = 60;
 sun.shadow.camera.bottom = -80;
 scene.add(sun);
 
+// Everything hole-specific (terrain, tee/pin, trees) lives in here so a multi-hole round can
+// tear one hole down and build the next without touching the ball, camera, or lighting.
+var holeGroup = new THREE.Group();
+scene.add(holeGroup);
+
+function clearHoleGroup() {
+  while (holeGroup.children.length) {
+    var child = holeGroup.children.pop();
+    holeGroup.remove(child);
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      (Array.isArray(child.material) ? child.material : [child.material]).forEach(function (m) { m.dispose(); });
+    }
+    if (child.children) {
+      child.children.forEach(function (grandchild) {
+        if (grandchild.geometry) grandchild.geometry.dispose();
+        if (grandchild.material) grandchild.material.dispose();
+      });
+    }
+  }
+}
+
 // Shared between both hole builders below.
 function addHoleAndFlag(pos) {
   var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
   hole.position.set(pos.x, 0.02, pos.z);
-  scene.add(hole);
+  holeGroup.add(hole);
 
   var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0xe8e4d8 }));
   pole.position.set(pos.x, 1.1, pos.z);
   pole.castShadow = true;
-  scene.add(pole);
+  holeGroup.add(pole);
 
   var flagShape = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), new THREE.MeshStandardMaterial({ color: 0xe8543f, side: THREE.DoubleSide, flatShading: true }));
   flagShape.position.set(pos.x + 0.28, 1.95, pos.z);
   flagShape.castShadow = true;
-  scene.add(flagShape);
+  holeGroup.add(flagShape);
 }
 
 function addTeeMarkers(pos, right) {
   [-1.1, 1.1].forEach(function (side) {
     var marker = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd9b877, flatShading: true }));
     marker.position.set(pos.x + right.x * side, 0.12, pos.z + right.z * side);
-    scene.add(marker);
+    holeGroup.add(marker);
   });
 }
 
@@ -321,8 +379,8 @@ function buildDefaultHole() {
   }
 
   var fairwayCenterZ = (TEE_POS.z + HOLE_POS.z) / 2;
-  scene.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
-  scene.add(makeGround(DEFAULT_FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
+  holeGroup.add(makeGround(90, HOLE_DISTANCE + 60, 30, 30, 0.5, 0x3c7a4a, fairwayCenterZ)); // rough
+  holeGroup.add(makeGround(DEFAULT_FAIRWAY_WIDTH, HOLE_DISTANCE + 20, 14, 40, 0.18, 0x5a9c5f, fairwayCenterZ)); // fairway
 
   var green = new THREE.Mesh(
     new THREE.CircleGeometry(9, 24),
@@ -331,7 +389,7 @@ function buildDefaultHole() {
   green.rotation.x = -Math.PI / 2;
   green.position.set(HOLE_POS.x, 0.06, HOLE_POS.z);
   green.receiveShadow = true;
-  scene.add(green);
+  holeGroup.add(green);
 
   addHoleAndFlag(HOLE_POS);
   addTeeMarkers(TEE_POS, RIGHT);
@@ -352,7 +410,7 @@ function buildDefaultHole() {
   for (var t = 0; t < 10; t++) {
     var side = t % 2 === 0 ? 1 : -1;
     var tz = TEE_POS.z - 8 - (t * (HOLE_DISTANCE / 10));
-    scene.add(makeTree(side * (10 + Math.random() * 6), tz, 0.8 + Math.random() * 0.5));
+    holeGroup.add(makeTree(side * (10 + Math.random() * 6), tz, 0.8 + Math.random() * 0.5));
   }
 }
 
@@ -410,7 +468,7 @@ function buildTileHole(course) {
   Object.keys(byType).forEach(function (type) {
     var style = TILE_STYLE[type] || TILE_STYLE.rough;
     var mesh = buildLayerMesh(byType[type], style.color, style.y, tileSize);
-    if (mesh) scene.add(mesh);
+    if (mesh) holeGroup.add(mesh);
   });
 
   if (treeCells.length) {
@@ -436,21 +494,100 @@ function buildTileHole(course) {
     });
     trunkMesh.instanceMatrix.needsUpdate = true;
     leafMesh.instanceMatrix.needsUpdate = true;
-    scene.add(trunkMesh, leafMesh);
+    holeGroup.add(trunkMesh, leafMesh);
   }
 
   addHoleAndFlag(HOLE_POS);
   addTeeMarkers(TEE_POS, RIGHT);
 }
 
+// ---- Round / scoring state ----
+// roundHoles is either the holes fetched for a saved course, or a single { isDefault: true }
+// entry standing in for the Phase 1 hardcoded hole — either way the rest of the round/scoring
+// machinery below doesn't need to know which.
+var roundHoles = [{ isDefault: true, par: 4 }];
+var currentHoleIdx = 0;
+var currentPar = 4;
+var strokesThisHole = 0;
+var scorecard = [];
+var CUP_RADIUS = 0.55; // generous vs. the real ~0.108m hole — matches this physics model's precision, not real golf
+var SCORE_NAME = { "-3": "Albatross", "-2": "Eagle", "-1": "Birdie", "0": "Par", "1": "Bogey", "2": "Double Bogey" };
+
+function loadHole(idx) {
+  currentHoleIdx = idx;
+  clearHoleGroup();
+
+  var h = roundHoles[idx];
+  currentPar = h.par || 4;
+  if (h.isDefault) {
+    buildDefaultHole();
+    buildMinimapBackground(null);
+  } else {
+    buildTileHole(h);
+    buildMinimapBackground(h);
+  }
+
+  document.getElementById("holePar").textContent = currentPar;
+  document.getElementById("holeNum").textContent = (idx + 1) + " / " + roundHoles.length;
+
+  resetBall(); // also zeroes strokesThisHole
+  camera.position.set(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
+  camera.lookAt(TEE_POS.x + FWD.x * 25, 1, TEE_POS.z + FWD.z * 25);
+}
+
+function scoreLabel(strokes, par) {
+  var diff = strokes - par;
+  if (diff >= 3) return diff + " over";
+  return SCORE_NAME[String(diff)] || (diff > 0 ? "+" + diff : diff);
+}
+
+function onHoleComplete() {
+  scorecard.push({ hole: currentHoleIdx + 1, par: currentPar, strokes: strokesThisHole });
+  settled = true;
+  cameraMode = "result";
+
+  var label = scoreLabel(strokesThisHole, currentPar);
+  els.shotLine.textContent = "Holed in " + strokesThisHole + " · " + label;
+
+  if (currentHoleIdx + 1 < roundHoles.length) {
+    setTimeout(function () { loadHole(currentHoleIdx + 1); }, 2600);
+  } else {
+    setTimeout(showRoundSummary, 1400);
+  }
+}
+
+function showRoundSummary() {
+  var totalStrokes = scorecard.reduce(function (s, h) { return s + h.strokes; }, 0);
+  var totalPar = scorecard.reduce(function (s, h) { return s + h.par; }, 0);
+  var lines = scorecard.map(function (h) {
+    return "Hole " + h.hole + ": " + h.strokes + " (par " + h.par + ", " + scoreLabel(h.strokes, h.par) + ")";
+  });
+  document.getElementById("summaryLines").innerHTML = lines.join("<br>");
+  document.getElementById("summaryTotal").textContent = totalStrokes + " (" + (totalStrokes - totalPar >= 0 ? "+" : "") + (totalStrokes - totalPar) + ")";
+  document.getElementById("roundSummary").classList.add("show");
+
+  // Keeps the door open for leaderboards later — just persisting results for now, no UI reads
+  // this back yet.
+  if (loadedCourseId) {
+    fetch(SUPABASE_URL + "/rest/v1/rounds", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }),
+      body: JSON.stringify([{ course_id: loadedCourseId, hole_scores: scorecard, total_strokes: totalStrokes, total_par: totalPar, completed: true }])
+    }).catch(function () { /* best-effort */ });
+  }
+}
+
+document.getElementById("playAgain").addEventListener("click", function () {
+  scorecard = [];
+  document.getElementById("roundSummary").classList.remove("show");
+  loadHole(0);
+});
+
 // ---- Ball + physics + gameplay bootstrap ----
-// Deferred behind a function because loading a course from Supabase is async — this runs
-// only once whichever hole builder above has finished setting TEE_POS/HOLE_POS/FWD/RIGHT.
+// Deferred behind a function because loading a course from Supabase is async.
 var ballMesh, world, ballBody;
 
 function startGameplay() {
-  camera.position.set(TEE_POS.x - FWD.x * 7, 2.6, TEE_POS.z - FWD.z * 7);
-
   ballMesh = new THREE.Mesh(
     new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
     new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 0.6 })
@@ -482,9 +619,9 @@ function startGameplay() {
   });
   world.addContactMaterial(contact);
 
-  resetBall();
   if (els.serverUrl.value) connect();
   clock = new THREE.Clock();
+  loadHole(0);
   animate();
 }
 
@@ -497,6 +634,10 @@ function resetBall() {
   shotStartPos = null;
   settled = true;
   cameraMode = "tee";
+  // Moving the ball back to the tee — whether starting a fresh hole or hitting the manual
+  // reset button mid-hole — is a restart of this hole either way, so the stroke count resets.
+  strokesThisHole = 0;
+  els.strokes.textContent = 0;
   els.toPin.innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
   document.getElementById("holeLength").innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
 }
@@ -504,7 +645,7 @@ function resetBall() {
 // ---- Minimap ----
 // Static terrain is cached to an offscreen canvas once when the hole is built (cheap to reuse
 // every frame); the ball dot and aim line are the only things redrawn on top each tick.
-var loadedCourse = null;
+var loadedCourseId = null;
 var mmCanvas = document.getElementById("minimap");
 var mmCtx = mmCanvas.getContext("2d");
 var MM_W = mmCanvas.width, MM_H = mmCanvas.height;
@@ -675,7 +816,14 @@ function launchShot(shot) {
   var loftDeg = shot.loftDeg || DEFAULT_LOFT;
   var speedMult = shot.speedMult || DEFAULT_SPEED_MULT;
 
-  resetBall();
+  // Real stroke play now — each shot plays on from wherever the last one settled, rather than
+  // resetting to the tee every time (that made sense for Phase 1's driving-range loop, but
+  // would make the stroke count meaningless once holing out and scoring are real).
+  strokesThisHole++;
+  els.strokes.textContent = strokesThisHole;
+  ballBody.velocity.set(0, 0, 0);
+  ballBody.angularVelocity.set(0, 0, 0);
+  ballBody.wakeUp();
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
@@ -726,7 +874,8 @@ var els = {
   shotLine: document.getElementById("shotLine"),
   powerFill: document.getElementById("powerFill"),
   powerNum: document.getElementById("powerNum"),
-  powerState: document.getElementById("powerState")
+  powerState: document.getElementById("powerState"),
+  strokes: document.getElementById("strokes")
 };
 
 var STORAGE_KEY = "swingLabServerUrl";
@@ -821,16 +970,20 @@ function animate() {
   ballMesh.quaternion.copy(ballBody.quaternion);
 
   if (!settled) {
-    var speed = ballBody.velocity.length();
-    if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
-      settled = true;
-      cameraMode = "result";
-      var dx = ballBody.position.x - shotStartPos.x;
-      var dz = ballBody.position.z - shotStartPos.z;
-      var carried = Math.sqrt(dx * dx + dz * dz);
-      var toPin = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
-      els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
-      els.toPin.innerHTML = toPin.toFixed(1) + '<span class="unit">m</span>';
+    var toPinNow = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
+    if (toPinNow < CUP_RADIUS && ballBody.position.y < BALL_RADIUS + 0.3) {
+      onHoleComplete();
+    } else {
+      var speed = ballBody.velocity.length();
+      if (speed < 0.35 && ballBody.position.y <= BALL_RADIUS + 0.05) {
+        settled = true;
+        cameraMode = "result";
+        var dx = ballBody.position.x - shotStartPos.x;
+        var dz = ballBody.position.z - shotStartPos.z;
+        var carried = Math.sqrt(dx * dx + dz * dz);
+        els.lastShot.innerHTML = carried.toFixed(1) + '<span class="unit">m</span>';
+        els.toPin.innerHTML = toPinNow.toFixed(1) + '<span class="unit">m</span>';
+      }
     }
   }
 
@@ -860,25 +1013,19 @@ var SUPABASE_KEY = "sb_publishable_0aGwrw5IzeVDtsrVDUYXwg_Mii1vwGt";
   var courseId = new URLSearchParams(location.search).get("course");
   if (courseId) {
     try {
-      var res = await fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + encodeURIComponent(courseId) + "&select=*", {
-        headers: { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY }
-      });
-      var rows = await res.json();
-      if (rows && rows[0]) {
-        loadedCourse = rows[0];
-        buildTileHole(loadedCourse);
-        document.title = "Swing Lab — " + (loadedCourse.name || "Course");
-        document.getElementById("holePar").textContent = loadedCourse.par || 4;
-      } else {
-        buildDefaultHole();
+      var sbHeaders = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
+      var results = await Promise.all([
+        fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + encodeURIComponent(courseId) + "&select=*", { headers: sbHeaders }).then(function (r) { return r.json(); }),
+        fetch(SUPABASE_URL + "/rest/v1/holes?course_id=eq." + encodeURIComponent(courseId) + "&select=*&order=hole_number.asc", { headers: sbHeaders }).then(function (r) { return r.json(); })
+      ]);
+      var courseRow = results[0][0], holeRows = results[1];
+      if (courseRow && holeRows.length) {
+        loadedCourseId = courseRow.id;
+        roundHoles = holeRows;
+        document.title = "Swing Lab — " + (courseRow.name || "Course");
       }
-    } catch (e) {
-      buildDefaultHole();
-    }
-  } else {
-    buildDefaultHole();
+    } catch (e) { /* falls through to the default hole below */ }
   }
-  buildMinimapBackground(loadedCourse);
   startGameplay();
 })();
 </script>

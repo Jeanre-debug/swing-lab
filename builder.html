@@ -21,7 +21,7 @@
   html, body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--paper); font-family: var(--sans); }
   body { display: flex; justify-content: center; padding: 20px 16px 40px; }
 
-  .wrap { width: 100%; max-width: 1040px; display: flex; flex-direction: column; gap: 14px; }
+  .wrap { width: 100%; max-width: 1080px; display: flex; flex-direction: column; gap: 14px; }
 
   .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
   h1 { margin: 2px 0 0; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
@@ -44,6 +44,15 @@
   .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--sand); }
   #nameInput { width: 220px; }
 
+  .visibility { display: flex; align-items: center; gap: 8px; }
+  .visibility button {
+    appearance: none; border: 1px solid var(--line-strong); background: var(--panel-raised);
+    color: var(--muted); font-family: var(--sans); font-size: 12px; font-weight: 700;
+    padding: 8px 12px; border-radius: 999px;
+  }
+  .visibility button.active { border-color: var(--sand); background: color-mix(in srgb, var(--sand) 16%, var(--panel-raised)); color: var(--paper); }
+  .visibility button:focus-visible { outline: 2px solid var(--sand); }
+
   .btn {
     appearance: none;
     border: none;
@@ -60,9 +69,23 @@
   }
   .btn:focus-visible { outline: 2px solid var(--sand); }
   .btn.primary { background: var(--turf); border-color: var(--turf); color: #06170d; }
-  .btn.danger { background: color-mix(in srgb, var(--flag) 16%, var(--panel-raised)); border-color: color-mix(in srgb, var(--flag) 40%, var(--line-strong)); }
   .btn:disabled { opacity: 0.45; }
   .spacer { flex: 1; }
+
+  .hole-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .hole-tab {
+    appearance: none; border: 1px solid var(--line-strong); background: var(--panel-raised);
+    color: var(--muted); font-family: var(--mono); font-size: 12px; font-weight: 700;
+    padding: 7px 12px; border-radius: 8px;
+  }
+  .hole-tab.active { border-color: var(--turf); background: color-mix(in srgb, var(--turf) 16%, var(--panel-raised)); color: var(--paper); }
+  .hole-tab:focus-visible { outline: 2px solid var(--sand); }
+  .hole-tab-add { color: var(--turf); }
+  .hole-tab-remove {
+    appearance: none; border: none; background: none; color: var(--muted);
+    font-size: 11px; padding: 7px 8px;
+  }
+  .hole-tab-remove:focus-visible { outline: 2px solid var(--sand); }
 
   .main-row { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
 
@@ -93,7 +116,7 @@
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 10px;
-    max-height: 74vh;
+    max-height: 68vh;
     overflow: auto;
   }
   canvas#grid { display: block; cursor: crosshair; touch-action: none; }
@@ -114,6 +137,9 @@
   .check-item.ok { color: var(--paper); }
   .check-item.ok .dot { background: var(--turf); }
 
+  .round-readout { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .round-readout b { color: var(--paper); font-family: var(--mono); }
+
   .message { font-size: 12.5px; padding: 10px 12px; border-radius: 8px; display: none; }
   .message.show { display: block; }
   .message.error { background: color-mix(in srgb, var(--flag) 16%, var(--panel-raised)); border: 1px solid color-mix(in srgb, var(--flag) 45%, var(--line)); color: var(--paper); }
@@ -130,7 +156,7 @@
   }
   .overlay.show { opacity: 1; pointer-events: auto; }
   .modal {
-    width: 100%; max-width: 420px;
+    width: 100%; max-width: 460px;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 14px;
@@ -140,6 +166,13 @@
   }
   .modal .head { display: flex; justify-content: space-between; align-items: center; }
   .modal .head button { appearance: none; border: none; background: none; color: var(--muted); font-size: 13px; }
+  .modal .tabs { display: flex; gap: 6px; }
+  .modal .tabs button {
+    appearance: none; border: 1px solid var(--line-strong); background: var(--panel-raised);
+    color: var(--muted); font-family: var(--sans); font-size: 11.5px; font-weight: 700;
+    padding: 6px 12px; border-radius: 999px;
+  }
+  .modal .tabs button.active { border-color: var(--turf); background: color-mix(in srgb, var(--turf) 16%, var(--panel-raised)); color: var(--paper); }
   .course-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
   .course-row {
     display: flex; justify-content: space-between; align-items: center; gap: 10px;
@@ -153,28 +186,42 @@
 
 <div class="wrap">
   <div>
-    <div class="eyebrow">Phase 2 · Course Builder</div>
+    <div class="eyebrow">Phase 4 · Course Builder</div>
     <h1>Swing Lab — Builder</h1>
   </div>
 
   <div class="panel toolbar">
     <div class="field">
       <span class="label">Course Name</span>
-      <input id="nameInput" placeholder="Untitled Hole" autocomplete="off">
+      <input id="nameInput" placeholder="Untitled Course" autocomplete="off">
     </div>
     <div class="field">
-      <span class="label">Par</span>
-      <select id="parInput">
-        <option value="3">3</option>
-        <option value="4" selected>4</option>
-        <option value="5">5</option>
-      </select>
+      <span class="label">Visibility</span>
+      <div class="visibility">
+        <button id="visPrivate" class="active">Private</button>
+        <button id="visPublic">Public</button>
+      </div>
     </div>
     <div class="spacer"></div>
     <button class="btn" id="newBtn">New</button>
     <button class="btn" id="loadBtn">Load</button>
     <button class="btn primary" id="saveBtn">Save</button>
     <button class="btn" id="playBtn" disabled>Play &rarr;</button>
+  </div>
+
+  <div class="panel toolbar">
+    <div class="hole-tabs" id="holeTabs"></div>
+    <div class="spacer"></div>
+    <button class="btn hole-tab-add" id="addHoleBtn">+ Add Hole</button>
+    <button class="btn" id="removeHoleBtn">Remove This Hole</button>
+    <div class="field">
+      <span class="label">Par (this hole)</span>
+      <select id="parInput">
+        <option value="3">3</option>
+        <option value="4" selected>4</option>
+        <option value="5">5</option>
+      </select>
+    </div>
   </div>
 
   <div class="message" id="message"></div>
@@ -205,6 +252,11 @@
       <div class="check-item" id="check-tee"><span class="dot"></span>Tee placed</div>
       <div class="check-item" id="check-pin"><span class="dot"></span>Pin placed</div>
       <div class="check-item" id="check-fairway"><span class="dot"></span>Fairway laid (15+ tiles)</div>
+
+      <div class="round-readout">
+        <div>Holes: <b id="holeCountVal">1</b></div>
+        <div>Course Par: <b id="coursePar">4</b></div>
+      </div>
     </div>
   </div>
 </div>
@@ -214,6 +266,10 @@
     <div class="head">
       <span class="eyebrow">Load Course</span>
       <button id="closeLoad">Close</button>
+    </div>
+    <div class="tabs">
+      <button class="active" id="tabMine">My Courses</button>
+      <button id="tabPublic">Public</button>
     </div>
     <div class="course-list" id="courseList"></div>
   </div>
@@ -235,17 +291,21 @@
     bunker: "#d9b877", water: "#3a7fc1", tree: "#2e6b3e"
   };
 
-  var tiles = [];
-  var tee = null, pin = null;
-  var currentCourseId = null;
-  var activeTool = "fairway";
-
-  function newGrid(cols, rows) {
+  function newGrid() {
     var g = [];
-    for (var y = 0; y < rows; y++) g.push(new Array(cols).fill("rough"));
+    for (var y = 0; y < ROWS; y++) g.push(new Array(COLS).fill("rough"));
     return g;
   }
-  tiles = newGrid(COLS, ROWS);
+  function newHole() {
+    return { par: 4, tiles: newGrid(), tee: null, pin: null };
+  }
+
+  var courseId = null;
+  var courseName = "";
+  var isPublic = false;
+  var holes = [newHole()];
+  var activeHole = 0;
+  var activeTool = "fairway";
 
   var $ = function (id) { return document.getElementById(id); };
   var canvas = $("grid");
@@ -253,11 +313,14 @@
 
   var els = {
     name: $("nameInput"), par: $("parInput"),
+    visPrivate: $("visPrivate"), visPublic: $("visPublic"),
     newBtn: $("newBtn"), loadBtn: $("loadBtn"), saveBtn: $("saveBtn"), playBtn: $("playBtn"),
+    addHoleBtn: $("addHoleBtn"), removeHoleBtn: $("removeHoleBtn"), holeTabs: $("holeTabs"),
     message: $("message"),
     loadOverlay: $("loadOverlay"), closeLoad: $("closeLoad"), courseList: $("courseList"),
+    tabMine: $("tabMine"), tabPublic: $("tabPublic"),
     checkTee: $("check-tee"), checkPin: $("check-pin"), checkFairway: $("check-fairway"),
-    holeLengthVal: $("holeLengthVal")
+    holeLengthVal: $("holeLengthVal"), holeCountVal: $("holeCountVal"), coursePar: $("coursePar")
   };
 
   function resizeCanvas() {
@@ -266,11 +329,14 @@
   }
   resizeCanvas();
 
+  function currentHole() { return holes[activeHole]; }
+
   function draw() {
+    var h = currentHole();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < COLS; x++) {
-        ctx.fillStyle = TYPE_COLOR[tiles[y][x]] || TYPE_COLOR.rough;
+        ctx.fillStyle = TYPE_COLOR[h.tiles[y][x]] || TYPE_COLOR.rough;
         ctx.fillRect(x * CELL_PX, y * CELL_PX, CELL_PX, CELL_PX);
       }
     }
@@ -282,9 +348,8 @@
     for (var gx = 0; gx <= COLS; gx++) {
       ctx.beginPath(); ctx.moveTo(gx * CELL_PX + 0.5, 0); ctx.lineTo(gx * CELL_PX + 0.5, canvas.height); ctx.stroke();
     }
-
-    if (tee) drawMarker(tee, "#d9b877", "T");
-    if (pin) drawMarker(pin, "#e8543f", "P");
+    if (h.tee) drawMarker(h.tee, "#d9b877", "T");
+    if (h.pin) drawMarker(h.pin, "#e8543f", "P");
   }
 
   function drawMarker(cell, color, label) {
@@ -303,25 +368,48 @@
     ctx.fillText(label, cx, cy + 0.5);
   }
 
+  function renderHoleTabs() {
+    els.holeTabs.innerHTML = "";
+    holes.forEach(function (h, i) {
+      var btn = document.createElement("button");
+      btn.className = "hole-tab" + (i === activeHole ? " active" : "");
+      btn.textContent = "Hole " + (i + 1);
+      btn.addEventListener("click", function () {
+        activeHole = i;
+        els.par.value = currentHole().par;
+        renderHoleTabs();
+        draw(); updateStats();
+      });
+      els.holeTabs.appendChild(btn);
+    });
+    els.removeHoleBtn.disabled = holes.length <= 1;
+    els.holeCountVal.textContent = holes.length;
+    var totalPar = holes.reduce(function (s, h) { return s + h.par; }, 0);
+    els.coursePar.textContent = totalPar;
+  }
+
   function updateStats() {
+    var h = currentHole();
     var counts = { rough: 0, fairway: 0, green: 0, bunker: 0, water: 0, tree: 0 };
-    for (var y = 0; y < ROWS; y++) for (var x = 0; x < COLS; x++) counts[tiles[y][x]]++;
+    for (var y = 0; y < ROWS; y++) for (var x = 0; x < COLS; x++) counts[h.tiles[y][x]]++;
     Object.keys(counts).forEach(function (k) {
       var el = $("cnt-" + k);
       if (el) el.textContent = counts[k];
     });
 
-    setCheck(els.checkTee, !!tee);
-    setCheck(els.checkPin, !!pin);
+    setCheck(els.checkTee, !!h.tee);
+    setCheck(els.checkPin, !!h.pin);
     setCheck(els.checkFairway, counts.fairway >= 15);
 
-    if (tee && pin) {
-      var dx = (tee.x - pin.x) * TILE_SIZE, dy = (tee.y - pin.y) * TILE_SIZE;
-      var length = Math.sqrt(dx * dx + dy * dy);
-      els.holeLengthVal.innerHTML = length.toFixed(0) + '<span class="unit">m</span>';
+    if (h.tee && h.pin) {
+      var dx = (h.tee.x - h.pin.x) * TILE_SIZE, dy = (h.tee.y - h.pin.y) * TILE_SIZE;
+      els.holeLengthVal.innerHTML = Math.sqrt(dx * dx + dy * dy).toFixed(0) + '<span class="unit">m</span>';
     } else {
       els.holeLengthVal.innerHTML = '&#8211;<span class="unit">m</span>';
     }
+
+    var totalPar = holes.reduce(function (s, hh) { return s + hh.par; }, 0);
+    els.coursePar.textContent = totalPar;
   }
 
   function setCheck(el, ok) { el.classList.toggle("ok", ok); }
@@ -341,6 +429,31 @@
     });
   });
 
+  // ---- Par (per hole) ----
+  els.par.addEventListener("change", function () {
+    currentHole().par = parseInt(els.par.value, 10);
+    renderHoleTabs();
+  });
+
+  // ---- Holes ----
+  els.addHoleBtn.addEventListener("click", function () {
+    holes.push(newHole());
+    activeHole = holes.length - 1;
+    els.par.value = 4;
+    renderHoleTabs(); draw(); updateStats();
+  });
+  els.removeHoleBtn.addEventListener("click", function () {
+    if (holes.length <= 1) return;
+    holes.splice(activeHole, 1);
+    activeHole = Math.max(0, activeHole - 1);
+    els.par.value = currentHole().par;
+    renderHoleTabs(); draw(); updateStats();
+  });
+
+  // ---- Visibility ----
+  els.visPrivate.addEventListener("click", function () { isPublic = false; els.visPrivate.classList.add("active"); els.visPublic.classList.remove("active"); });
+  els.visPublic.addEventListener("click", function () { isPublic = true; els.visPublic.classList.add("active"); els.visPrivate.classList.remove("active"); });
+
   // ---- Paint ----
   var painting = false;
   var lastCell = null;
@@ -354,9 +467,10 @@
   }
 
   function paintAt(cell) {
-    if (activeTool === "tee") { tee = cell; }
-    else if (activeTool === "pin") { pin = cell; }
-    else { tiles[cell.y][cell.x] = activeTool; }
+    var h = currentHole();
+    if (activeTool === "tee") { h.tee = cell; }
+    else if (activeTool === "pin") { h.pin = cell; }
+    else { h.tiles[cell.y][cell.x] = activeTool; }
     draw();
     updateStats();
   }
@@ -384,52 +498,70 @@
 
   // ---- New ----
   els.newBtn.addEventListener("click", function () {
-    COLS = 24; ROWS = 50;
-    tiles = newGrid(COLS, ROWS);
-    tee = null; pin = null;
-    currentCourseId = null;
+    courseId = null; courseName = ""; isPublic = false;
+    holes = [newHole()]; activeHole = 0;
     els.name.value = ""; els.par.value = "4";
+    els.visPrivate.classList.add("active"); els.visPublic.classList.remove("active");
     els.playBtn.disabled = true;
-    resizeCanvas(); draw(); updateStats(); clearMessage();
+    renderHoleTabs(); draw(); updateStats(); clearMessage();
   });
 
   // ---- Save ----
-  function buildPayload() {
+  function sparseTiles(tiles) {
     var sparse = [];
     for (var y = 0; y < ROWS; y++) {
       for (var x = 0; x < COLS; x++) {
         if (tiles[y][x] !== "rough") sparse.push({ x: x, y: y, type: tiles[y][x] });
       }
     }
-    return {
-      name: els.name.value.trim() || "Untitled Hole",
-      par: parseInt(els.par.value, 10),
-      grid_cols: COLS, grid_rows: ROWS, tile_size: TILE_SIZE,
-      tiles: sparse, tee: tee, pin: pin
-    };
+    return sparse;
   }
 
   els.saveBtn.addEventListener("click", function () {
-    if (!tee || !pin) {
-      showMessage("Place a tee and a pin before saving.", "error");
-      return;
+    for (var i = 0; i < holes.length; i++) {
+      if (!holes[i].tee || !holes[i].pin) {
+        showMessage("Hole " + (i + 1) + " needs both a tee and a pin before saving.", "error");
+        activeHole = i; els.par.value = holes[i].par; renderHoleTabs(); draw(); updateStats();
+        return;
+      }
     }
-    var payload = buildPayload();
-    var isUpdate = !!currentCourseId;
-    var url = SUPABASE_URL + "/rest/v1/courses" + (isUpdate ? "?id=eq." + currentCourseId : "");
-    fetch(url, {
+
+    var coursePayload = { name: els.name.value.trim() || "Untitled Course", is_public: isPublic };
+    var isUpdate = !!courseId;
+    var courseUrl = SUPABASE_URL + "/rest/v1/courses" + (isUpdate ? "?id=eq." + courseId : "");
+
+    fetch(courseUrl, {
       method: isUpdate ? "PATCH" : "POST",
       headers: Object.assign({ "Content-Type": "application/json", Prefer: "return=representation" }, SB_HEADERS),
-      body: JSON.stringify(payload)
+      body: JSON.stringify(coursePayload)
     })
       .then(function (res) {
-        if (!res.ok) throw new Error("save failed (" + res.status + ")");
+        if (!res.ok) throw new Error("course save failed (" + res.status + ")");
         return res.json();
       })
       .then(function (rows) {
-        currentCourseId = rows[0].id;
+        courseId = rows[0].id;
+        // Simplest consistent way to save a whole hole set: replace them all.
+        return fetch(SUPABASE_URL + "/rest/v1/holes?course_id=eq." + courseId, { method: "DELETE", headers: SB_HEADERS });
+      })
+      .then(function () {
+        var holeRows = holes.map(function (h, i) {
+          return {
+            course_id: courseId, hole_number: i + 1, par: h.par,
+            grid_cols: COLS, grid_rows: ROWS, tile_size: TILE_SIZE,
+            tiles: sparseTiles(h.tiles), tee: h.tee, pin: h.pin
+          };
+        });
+        return fetch(SUPABASE_URL + "/rest/v1/holes", {
+          method: "POST",
+          headers: Object.assign({ "Content-Type": "application/json", Prefer: "return=minimal" }, SB_HEADERS),
+          body: JSON.stringify(holeRows)
+        });
+      })
+      .then(function (res) {
+        if (!res.ok) throw new Error("holes save failed (" + res.status + ")");
         els.playBtn.disabled = false;
-        showMessage("Saved.", "success", "course.html?course=" + currentCourseId);
+        showMessage("Saved (" + holes.length + " hole" + (holes.length > 1 ? "s" : "") + ").", "success", "course.html?course=" + courseId);
       })
       .catch(function (err) {
         showMessage("Couldn't save: " + err.message, "error");
@@ -437,25 +569,26 @@
   });
 
   els.playBtn.addEventListener("click", function () {
-    if (currentCourseId) window.open("course.html?course=" + currentCourseId, "_blank");
+    if (courseId) window.open("course.html?course=" + courseId, "_blank");
   });
 
   // ---- Load ----
-  els.loadBtn.addEventListener("click", function () {
+  function openLoadModal(filterPublic) {
     els.loadOverlay.classList.add("show");
     els.courseList.innerHTML = '<div class="course-empty">Loading…</div>';
-    fetch(SUPABASE_URL + "/rest/v1/courses?select=id,name,par,updated_at&order=updated_at.desc&limit=25", { headers: SB_HEADERS })
+    var q = "select=id,name,is_public,updated_at&order=updated_at.desc&limit=25" + (filterPublic ? "&is_public=eq.true" : "");
+    fetch(SUPABASE_URL + "/rest/v1/courses?" + q, { headers: SB_HEADERS })
       .then(function (res) { return res.json(); })
       .then(function (rows) {
         if (!rows.length) {
-          els.courseList.innerHTML = '<div class="course-empty">No saved courses yet.</div>';
+          els.courseList.innerHTML = '<div class="course-empty">' + (filterPublic ? "No public courses yet." : "No saved courses yet.") + '</div>';
           return;
         }
         els.courseList.innerHTML = "";
         rows.forEach(function (row) {
           var el = document.createElement("div");
           el.className = "course-row";
-          el.innerHTML = '<span>' + row.name + '<br><span class="meta">Par ' + row.par + ' · ' + new Date(row.updated_at).toLocaleString() + '</span></span><button>Load</button>';
+          el.innerHTML = '<span>' + row.name + (row.is_public ? " · public" : "") + '<br><span class="meta">' + new Date(row.updated_at).toLocaleString() + '</span></span><button>Load</button>';
           el.querySelector("button").addEventListener("click", function () { loadCourse(row.id); });
           els.courseList.appendChild(el);
         });
@@ -463,35 +596,47 @@
       .catch(function () {
         els.courseList.innerHTML = '<div class="course-empty">Couldn’t reach Supabase.</div>';
       });
+  }
+  els.loadBtn.addEventListener("click", function () {
+    els.tabMine.classList.add("active"); els.tabPublic.classList.remove("active");
+    openLoadModal(false);
   });
+  els.tabMine.addEventListener("click", function () { els.tabMine.classList.add("active"); els.tabPublic.classList.remove("active"); openLoadModal(false); });
+  els.tabPublic.addEventListener("click", function () { els.tabPublic.classList.add("active"); els.tabMine.classList.remove("active"); openLoadModal(true); });
   els.closeLoad.addEventListener("click", function () { els.loadOverlay.classList.remove("show"); });
   els.loadOverlay.addEventListener("click", function (e) {
     if (e.target === els.loadOverlay) els.loadOverlay.classList.remove("show");
   });
 
   function loadCourse(id) {
-    fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + id + "&select=*", { headers: SB_HEADERS })
-      .then(function (res) { return res.json(); })
-      .then(function (rows) {
-        var c = rows[0];
-        if (!c) return;
-        COLS = c.grid_cols; ROWS = c.grid_rows; TILE_SIZE = c.tile_size || 5;
-        tiles = newGrid(COLS, ROWS);
-        (c.tiles || []).forEach(function (t) {
-          if (tiles[t.y] && t.x >= 0 && t.x < COLS) tiles[t.y][t.x] = t.type;
-        });
-        tee = c.tee; pin = c.pin;
-        currentCourseId = c.id;
-        els.name.value = c.name; els.par.value = c.par;
-        els.playBtn.disabled = false;
-        resizeCanvas(); draw(); updateStats(); clearMessage();
-        els.loadOverlay.classList.remove("show");
-      })
-      .catch(function () {
-        showMessage("Couldn't load that course.", "error");
+    Promise.all([
+      fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + id + "&select=*", { headers: SB_HEADERS }).then(function (r) { return r.json(); }),
+      fetch(SUPABASE_URL + "/rest/v1/holes?course_id=eq." + id + "&select=*&order=hole_number.asc", { headers: SB_HEADERS }).then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      var c = results[0][0], holeRows = results[1];
+      if (!c || !holeRows.length) return;
+
+      COLS = holeRows[0].grid_cols; ROWS = holeRows[0].grid_rows; TILE_SIZE = holeRows[0].tile_size || 5;
+      holes = holeRows.map(function (hr) {
+        var tiles = newGrid();
+        (hr.tiles || []).forEach(function (t) { if (tiles[t.y] && t.x >= 0 && t.x < COLS) tiles[t.y][t.x] = t.type; });
+        return { par: hr.par, tiles: tiles, tee: hr.tee, pin: hr.pin };
       });
+      activeHole = 0;
+      courseId = c.id; courseName = c.name; isPublic = c.is_public;
+      els.name.value = c.name; els.par.value = holes[0].par;
+      if (isPublic) { els.visPublic.classList.add("active"); els.visPrivate.classList.remove("active"); }
+      else { els.visPrivate.classList.add("active"); els.visPublic.classList.remove("active"); }
+      els.playBtn.disabled = false;
+      resizeCanvas();
+      renderHoleTabs(); draw(); updateStats(); clearMessage();
+      els.loadOverlay.classList.remove("show");
+    }).catch(function () {
+      showMessage("Couldn't load that course.", "error");
+    });
   }
 
+  renderHoleTabs();
   draw();
   updateStats();
 })();
