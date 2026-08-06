@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swing Lab</title>
+<style>
+  :root {
+    --bg: #0c120e;
+    --panel: #131b15;
+    --panel-raised: #182219;
+    --line: #26332a;
+    --line-strong: #364638;
+    --turf: #4bab6d;
+    --flag: #e8543f;
+    --sand: #d9b877;
+    --paper: #eef2ea;
+    --muted: #8a9a8f;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--paper); font-family: var(--sans); }
+
+  body {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 24px;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* A quiet suggestion of a green at dusk behind everything — a horizon band and a soft glow,
+     nothing literal or busy, so it reads as atmosphere rather than a decoration competing with
+     the two real choices on the page. */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 900px 500px at 50% -10%, color-mix(in srgb, var(--turf) 16%, transparent), transparent 60%),
+      linear-gradient(180deg, var(--bg) 0%, var(--bg) 62%, #0f1a12 100%);
+  }
+  .backdrop::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 42vh;
+    background: repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--turf) 6%, transparent) 0px,
+      color-mix(in srgb, var(--turf) 6%, transparent) 2px,
+      transparent 2px,
+      transparent 64px
+    );
+    mask-image: linear-gradient(180deg, transparent, black 70%);
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 880px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10vh 0 40px;
+  }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--sand);
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--turf); box-shadow: 0 0 0 4px color-mix(in srgb, var(--turf) 20%, transparent); }
+
+  h1 {
+    margin: 18px 0 0;
+    font-size: clamp(40px, 7vw, 68px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.03;
+    text-align: center;
+    text-wrap: balance;
+  }
+  h1 span { color: var(--turf); }
+
+  .subtitle {
+    margin: 18px 0 0;
+    max-width: 560px;
+    text-align: center;
+    font-size: 16.5px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .choices {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 56px;
+  }
+  @media (max-width: 640px) {
+    .choices { grid-template-columns: 1fr; }
+  }
+
+  .choice {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 28px 26px 26px;
+    overflow: hidden;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  }
+  .choice:hover, .choice:focus-visible {
+    transform: translateY(-3px);
+    border-color: var(--line-strong);
+    background: var(--panel-raised);
+  }
+  .choice:active { transform: translateY(-1px); }
+  .choice:focus-visible { outline: 2px solid var(--sand); outline-offset: 3px; }
+
+  .choice .glyph {
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--accent) 16%, var(--panel-raised));
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .choice.play { --accent: var(--turf); }
+  .choice.build { --accent: var(--sand); }
+
+  .choice h2 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .choice p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .choice .go {
+    margin-top: 10px;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .choice .go svg { transition: transform 0.18s ease; }
+  .choice:hover .go svg { transform: translateX(3px); }
+
+  .how {
+    width: 100%;
+    margin-top: 64px;
+    padding-top: 36px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  @media (max-width: 640px) {
+    .how { grid-template-columns: 1fr; gap: 20px; }
+  }
+  .how .step { display: flex; gap: 14px; align-items: flex-start; }
+  .how .num {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--line-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .how h3 { margin: 0 0 4px; font-size: 13.5px; font-weight: 700; }
+  .how p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+
+  footer {
+    position: relative;
+    z-index: 1;
+    margin-top: auto;
+    padding: 40px 0 28px;
+    font-size: 11.5px;
+    color: var(--muted);
+    text-align: center;
+  }
+  footer a { color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .choice { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+
+<div class="page">
+  <div class="eyebrow"><span class="dot"></span>Swing Lab</div>
+  <h1>Golf, with your phone<br>as the <span>club</span>.</h1>
+  <p class="subtitle">Open the course on a laptop, swing your phone like a 7-iron, and everyone in the room plays the same round together.</p>
+
+  <div class="choices">
+    <a class="choice play" href="course.html">
+      <div class="glyph" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M9 8.5v7l6.5-3.5L9 8.5Z" fill="currentColor"/>
+        </svg>
+      </div>
+      <h2>Play</h2>
+      <p>Host a room, get a join code, and play a round with anyone who's got their phone in hand.</p>
+      <span class="go">Open the course
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+    </a>
+
+    <a class="choice build" href="builder.html">
+      <div class="glyph" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <path d="M4 20V6.8L14 3l6 2.4V18l-6-2.4L4 20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M14 3v12.6" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+      </div>
+      <h2>Course Builder</h2>
+      <p>Paint fairways, drop bunkers and water, and design your own holes from scratch.</p>
+      <span class="go">Open the builder
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+    </a>
+  </div>
+
+  <div class="how">
+    <div class="step">
+      <div class="num">1</div>
+      <div><h3>Laptop opens the course</h3><p>Play here shows a short room code.</p></div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div><h3>Everyone joins by phone</h3><p>Enter a name and the code — that phone is now a club.</p></div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div><h3>Take turns and swing</h3><p>One shot at a time, in rotation, same as playing for real.</p></div>
+    </div>
+  </div>
+</div>
+
+<footer>Swing Lab — closer to a backyard game than a launch monitor.</footer>
+</body>
+</html>

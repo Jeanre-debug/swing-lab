@@ -151,6 +151,20 @@
   }
   .bottom-stack > * { pointer-events: auto; }
 
+  .shot-distance {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 46px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--paper);
+    text-shadow: 0 2px 14px rgba(0,0,0,0.55), 0 0 30px rgba(0,0,0,0.35);
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+  }
+  .shot-distance .unit { font-size: 19px; font-weight: 700; color: var(--sand); text-shadow: 0 2px 10px rgba(0,0,0,0.55); }
+
   .power-wrap { width: 260px; padding: 10px 14px; }
   .power-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 7px; }
   .power-label #powerState.hot { color: var(--sand); }
@@ -293,6 +307,7 @@
       <div class="difficulty-tag" id="difficultyTag"></div>
     </div>
 
+    <a class="panel builder-link" href="home.html" id="homeLink">&larr; Home</a>
     <a class="panel builder-link" href="builder.html" id="builderLink">Course Builder &rarr;</a>
 
     <div class="panel players-panel hidden" id="playersPanel">
@@ -362,6 +377,8 @@
 </div>
 
 <div class="bottom-stack">
+  <div class="shot-distance hidden" id="shotDistance"><span id="shotDistanceVal">0</span><span class="unit">m</span></div>
+
   <div class="power-wrap panel">
     <div class="power-label">
       <span id="powerState">Armed</span>
@@ -403,15 +420,27 @@ var TEE_POS = { x: 0, z: 0 };
 var HOLE_POS = { x: 0, z: -1 };
 var FWD = { x: 0, z: -1 };
 var RIGHT = { x: 1, z: 0 };
+// HOLE_DISTANCE doubles as "distance remaining to the pin from wherever the ball currently is"
+// (recomputeAimFromBallPos overwrites it after every shot, for aim/minimap scaling) — that's
+// the right value for those uses, but it meant the "Hole Length" HUD readout, which re-reads
+// this same variable on every resetBall(), silently started showing the shrinking remaining
+// distance instead of the hole's actual fixed length the moment a shot moved the ball. This
+// holds the true tee-to-pin length separately, set once per hole and never touched again.
 var HOLE_DISTANCE = 1;
+var HOLE_LENGTH_M = 1;
+var HOLE_FWD = { x: 0, z: -1 }; // the hole's real tee->pin bearing, for restoring on a manual reset
+var HOLE_RIGHT = { x: 1, z: 0 };
 
 function setHoleVectors(tee, pin) {
   TEE_POS = tee;
   HOLE_POS = pin;
   var dx = pin.x - tee.x, dz = pin.z - tee.z;
   HOLE_DISTANCE = Math.hypot(dx, dz) || 1;
+  HOLE_LENGTH_M = HOLE_DISTANCE;
   FWD = { x: dx / HOLE_DISTANCE, z: dz / HOLE_DISTANCE };
   RIGHT = { x: -FWD.z, z: FWD.x };
+  HOLE_FWD = { x: FWD.x, z: FWD.z };
+  HOLE_RIGHT = { x: RIGHT.x, z: RIGHT.z };
 }
 
 // ---- Renderer / scene ----
@@ -490,10 +519,14 @@ function tileTypeAt(worldX, worldZ) {
     return currentTileGrid[ty][tx] || "rough";
   }
   if (Math.hypot(worldX - HOLE_POS.x, worldZ - HOLE_POS.z) < 9) return "green";
+  // The fairway strip is a fixed feature of the hole's actual geometry, not of wherever the
+  // ball happens to be right now — has to use the hole's real tee->pin bearing/length
+  // (HOLE_FWD/HOLE_RIGHT/HOLE_LENGTH_M), not FWD/RIGHT/HOLE_DISTANCE, which get overwritten
+  // after every shot to describe the ball's current remaining line to the pin instead.
   var relX = worldX - TEE_POS.x, relZ = worldZ - TEE_POS.z;
-  var alongDist = relX * FWD.x + relZ * FWD.z;
-  var perpDist = Math.abs(relX * RIGHT.x + relZ * RIGHT.z);
-  if (alongDist >= -5 && alongDist <= HOLE_DISTANCE + 5 && perpDist <= DEFAULT_FAIRWAY_WIDTH / 2) return "fairway";
+  var alongDist = relX * HOLE_FWD.x + relZ * HOLE_FWD.z;
+  var perpDist = Math.abs(relX * HOLE_RIGHT.x + relZ * HOLE_RIGHT.z);
+  if (alongDist >= -5 && alongDist <= HOLE_LENGTH_M + 5 && perpDist <= DEFAULT_FAIRWAY_WIDTH / 2) return "fairway";
   return "rough";
 }
 
@@ -772,7 +805,7 @@ var SCORE_NAME = { "-3": "Albatross", "-2": "Eagle", "-1": "Birdie", "0": "Par",
 var roomCode = null;
 var roster = []; // [{id, name}] — mirrors the server's roster broadcast
 var rosterClubs = {}; // playerId -> clubName, tracked from the moment they join (players[] doesn't exist yet in the lobby)
-var players = []; // built from roster when Start Round is clicked: [{id, name, strokes, ballPos, finishedHole, holeScores, lastClubName}]
+var players = []; // built from roster when Start Round is clicked: [{id, name, strokes, ballPos, finishedHole, holeScores, connected}] — current club is read live from rosterClubs, not stored here
 var currentPlayerIdx = 0;
 var roundStarted = false;
 
@@ -849,9 +882,10 @@ function updateTurnHud() {
   if (!roundStarted) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");
   var p = currentPlayer();
+  var club = p ? rosterClubs[p.id] : null;
   document.getElementById("turnPanelText").textContent = p ? (players.length > 1 ? p.name + "’s Turn" : "Your Turn") : "–";
-  document.getElementById("turnPanelClub").textContent = p && p.lastClubName ? p.lastClubName : "";
-  if (p && p.lastClubName) els.clubName.textContent = p.lastClubName;
+  document.getElementById("turnPanelClub").textContent = club || "";
+  els.clubName.textContent = club || "–";
 }
 
 function broadcastTurn() {
@@ -1112,8 +1146,14 @@ function resetBall() {
   // reset button mid-hole — is a restart of this hole either way, so the stroke count resets.
   strokesThisHole = 0;
   els.strokes.textContent = 0;
-  els.toPin.innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
-  document.getElementById("holeLength").innerHTML = HOLE_DISTANCE.toFixed(0) + '<span class="unit">m</span>';
+  // The ball is back at the tee, so "distance to pin" and "hole length" are the same number by
+  // definition — and the aim bearing goes back to the hole's real tee->pin line rather than
+  // staying pointed wherever the last shot's remaining-distance recompute left it.
+  HOLE_DISTANCE = HOLE_LENGTH_M;
+  FWD = { x: HOLE_FWD.x, z: HOLE_FWD.z };
+  RIGHT = { x: HOLE_RIGHT.x, z: HOLE_RIGHT.z };
+  els.toPin.innerHTML = HOLE_LENGTH_M.toFixed(0) + '<span class="unit">m</span>';
+  document.getElementById("holeLength").innerHTML = HOLE_LENGTH_M.toFixed(0) + '<span class="unit">m</span>';
   // Otherwise the next turn switch would restore this player's stale pre-reset position/stroke
   // count from players[], silently undoing the manual reset once the rotation comes back around.
   if (currentPlayer()) { saveCurrentPlayerBallState(); currentPlayer().finishedHole = false; }
@@ -1639,7 +1679,9 @@ var els = {
   strokes: document.getElementById("strokes"),
   fastForwardHint: document.getElementById("fastForwardHint"),
   waterModal: document.getElementById("waterPenaltyModal"),
-  reteeBtn: document.getElementById("reteeBtn")
+  reteeBtn: document.getElementById("reteeBtn"),
+  shotDistance: document.getElementById("shotDistance"),
+  shotDistanceVal: document.getElementById("shotDistanceVal")
 };
 
 document.getElementById("dropEntryBtn").addEventListener("click", function () { resolveWaterPenalty("entry"); });
@@ -1720,14 +1762,14 @@ function connect() {
         return;
       }
       if (msg.type === "club") {
-        // Tracked from the moment a phone joins (it syncs its club right after "joined",
-        // before any round has started) so the HUD shows the right club the instant the
-        // rotation reaches a player, not just after their first swing. rosterClubs survives
-        // across the lobby -> round-started transition; players[] doesn't exist yet in the
-        // lobby, so it can't hold this itself.
+        // rosterClubs is the single source of truth for "what does this player currently have
+        // selected" — always kept live regardless of whose turn it is (a player can change
+        // clubs while waiting, and the HUD needs to show THAT selection once the rotation
+        // reaches them, not whatever they had selected the last time it was their turn).
+        // Tracked from the moment a phone joins too, before any round has started, so the HUD
+        // is right from the first turn rather than only after a player's first swing.
         rosterClubs[msg.playerId] = msg.clubName || null;
         if (roundStarted && currentPlayer() && msg.playerId === currentPlayer().id) {
-          currentPlayer().lastClubName = msg.clubName || null;
           els.clubName.textContent = msg.clubName || "–";
           document.getElementById("turnPanelClub").textContent = msg.clubName || "";
         }
@@ -1776,11 +1818,16 @@ document.getElementById("builderLink").addEventListener("click", function (e) {
   }
   if (loadedCourseId) e.currentTarget.href = "builder.html?course=" + loadedCourseId;
 });
+document.getElementById("homeLink").addEventListener("click", function (e) {
+  if (roundStarted && !confirm("Leave this round to go back Home? Everyone's progress will be lost.")) {
+    e.preventDefault();
+  }
+});
 
 document.getElementById("startRoundBtn").addEventListener("click", function () {
   if (!roster.length) return;
   players = roster.map(function (p) {
-    return { id: p.id, name: p.name, strokes: 0, ballPos: null, finishedHole: false, holeScores: [], lastClubName: rosterClubs[p.id] || null, connected: p.connected !== false };
+    return { id: p.id, name: p.name, strokes: 0, ballPos: null, finishedHole: false, holeScores: [], connected: p.connected !== false };
   });
   // Start on the first actually-connected player — someone who joined the lobby and then
   // dropped before Start Round shouldn't leave the round waiting on them from shot one.
@@ -1830,6 +1877,11 @@ function animate() {
 
   if (!settled) {
     pushTrailPoint(ballBody.position.x, ballBody.position.y, ballBody.position.z);
+    if (shotStartPos) {
+      els.shotDistance.classList.remove("hidden");
+      var liveDx = ballBody.position.x - shotStartPos.x, liveDz = ballBody.position.z - shotStartPos.z;
+      els.shotDistanceVal.textContent = Math.hypot(liveDx, liveDz).toFixed(0);
+    }
     var toPinNow = Math.hypot(ballBody.position.x - HOLE_POS.x, ballBody.position.z - HOLE_POS.z);
     if (toPinNow < CUP_RADIUS && ballBody.position.y < BALL_RADIUS + 0.3) {
       onHoleComplete();
@@ -1880,6 +1932,8 @@ function animate() {
         setTimeout(advanceTurn, 1300);
       }
     }
+  } else {
+    els.shotDistance.classList.add("hidden");
   }
 
   // Camera — "tee" here really means "ball at rest, aiming the next shot", which applies
