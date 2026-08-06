@@ -588,10 +588,27 @@ var TERRAIN_SPEED_MULT = { fairway: 1.0, green: 1.0, rough: 0.82, bunker: 0.55, 
 
 // Shared between both hole builders below.
 function addHoleAndFlag(pos) {
-  var hole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x0a0f0b }));
-  hole.position.set(pos.x, 0.02, pos.z);
-  holeGroup.add(hole);
+  // Sized off CUP_RADIUS (ball radius + 0.5) so the visible hole actually matches how close the
+  // ball has to get to register — used to be a fixed 0.14, noticeably smaller than the ball
+  // itself. A real cavity now (dark shaft sunk below the green) rather than a flat dark disc
+  // sitting on top of it, with a pale rim marking the cup's edge at the surface.
+  var cupDepth = 0.42;
+  var cup = new THREE.Mesh(
+    new THREE.CylinderGeometry(CUP_RADIUS, CUP_RADIUS, cupDepth, 20),
+    new THREE.MeshStandardMaterial({ color: 0x070a08, roughness: 1 })
+  );
+  cup.position.set(pos.x, -0.01 - cupDepth / 2, pos.z);
+  holeGroup.add(cup);
 
+  var rim = new THREE.Mesh(
+    new THREE.RingGeometry(CUP_RADIUS * 0.9, CUP_RADIUS * 1.08, 24),
+    new THREE.MeshStandardMaterial({ color: 0xe8e4d8, flatShading: true, side: THREE.DoubleSide })
+  );
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.set(pos.x, 0.006, pos.z);
+  holeGroup.add(rim);
+
+  // The pin sits dead center in the cup, same x/z as the cup and rim above.
   var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0xe8e4d8 }));
   pole.position.set(pos.x, 1.1, pos.z);
   pole.castShadow = true;
@@ -848,7 +865,11 @@ var roundHoles = [{ isDefault: true, par: 4 }];
 var currentHoleIdx = 0;
 var currentPar = 4;
 var strokesThisHole = 0;
-var CUP_RADIUS = 0.55; // generous vs. the real ~0.108m hole — matches this physics model's precision, not real golf
+// Real regulation cups are only ~0.054m bigger radius than a ball — generous here (0.5m) since
+// this model isn't aiming for that kind of precision, but it does mean the visible hole (below,
+// same radius) has to actually be this size too, or "the ball should've gone in" and "it
+// registered" stop agreeing with each other.
+var CUP_RADIUS = BALL_RADIUS + 0.5;
 var SCORE_NAME = { "-3": "Albatross", "-2": "Eagle", "-1": "Birdie", "0": "Par", "1": "Bogey", "2": "Double Bogey" };
 
 // ---- Multiplayer: room, roster, and turn-based per-player state ----
@@ -1083,6 +1104,7 @@ function onHoleComplete() {
   // happening right next to the pin instead.
   ballBody.velocity.set(0, 0, 0);
   ballBody.angularVelocity.set(0, 0, 0);
+  triggerHoleOutAnimation(ballBody.position.x, ballBody.position.z);
 
   var p = currentPlayer();
   p.finishedHole = true;
@@ -1483,6 +1505,140 @@ function updateWaterSplash(dt) {
     d.mesh.position.addScaledVector(d.vel, dt);
     d.mesh.material.opacity = 0.95 * (1 - age / SPLASH_DROPLET_LIFE);
   });
+}
+
+// ---- Hole-out: a quick sink animation, a gold burst + sparkle confetti at the pin, and a
+// synthesized chime — no ball/model to actually drop into the cup, so this sells "it went in"
+// with motion and sound instead. ----
+var holeOutActive = false;
+var holeOutStartT = 0;
+var holeOutStartPos = null;
+var HOLE_OUT_SINK_DURATION = 0.45;
+
+var HOLE_OUT_SPARK_COUNT = 18;
+var holeOutSparks = [];
+for (var hos = 0; hos < HOLE_OUT_SPARK_COUNT; hos++) {
+  var sparkColor = [0xf5d76e, 0xffffff, 0x8ee06a, 0xeecb8c][hos % 4];
+  var sparkMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 5, 4),
+    new THREE.MeshBasicMaterial({ color: sparkColor, transparent: true, opacity: 0 })
+  );
+  sparkMesh.visible = false;
+  scene.add(sparkMesh);
+  holeOutSparks.push({ mesh: sparkMesh, vel: new THREE.Vector3(), active: false, startT: 0 });
+}
+
+var holeOutRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.3, 0.5, 28),
+  new THREE.MeshBasicMaterial({ color: 0xf5d76e, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+);
+holeOutRing.rotation.x = -Math.PI / 2;
+holeOutRing.visible = false;
+scene.add(holeOutRing);
+var holeOutRingActive = false, holeOutRingStartT = 0;
+var HOLE_OUT_RING_DURATION = 0.9;
+var HOLE_OUT_SPARK_LIFE = 0.8;
+var HOLE_OUT_SPARK_GRAVITY = 7;
+
+function triggerHoleOutBurst(x, z) {
+  holeOutRingActive = true;
+  holeOutRingStartT = clock.getElapsedTime();
+  holeOutRing.position.set(x, 0.05, z);
+  holeOutRing.scale.setScalar(1);
+  holeOutRing.material.opacity = 1;
+  holeOutRing.visible = true;
+
+  holeOutSparks.forEach(function (s) {
+    s.mesh.position.set(x, 0.3, z);
+    var angle = Math.random() * Math.PI * 2;
+    var outSpeed = 1.5 + Math.random() * 2.2;
+    s.vel.set(Math.cos(angle) * outSpeed, 3.8 + Math.random() * 3, Math.sin(angle) * outSpeed);
+    s.mesh.material.opacity = 1;
+    s.mesh.visible = true;
+    s.active = true;
+    s.startT = holeOutRingStartT;
+  });
+}
+
+function updateHoleOutBurst(dt) {
+  var now = clock.getElapsedTime();
+  if (holeOutRingActive) {
+    var rp = (now - holeOutRingStartT) / HOLE_OUT_RING_DURATION;
+    if (rp >= 1) {
+      holeOutRingActive = false;
+      holeOutRing.visible = false;
+    } else {
+      holeOutRing.scale.setScalar(1 + rp * 9);
+      holeOutRing.material.opacity = 0.9 * (1 - rp);
+    }
+  }
+  holeOutSparks.forEach(function (s) {
+    if (!s.active) return;
+    var age = now - s.startT;
+    if (age > HOLE_OUT_SPARK_LIFE) {
+      s.active = false;
+      s.mesh.visible = false;
+      return;
+    }
+    s.vel.y -= HOLE_OUT_SPARK_GRAVITY * dt;
+    s.mesh.position.addScaledVector(s.vel, dt);
+    s.mesh.material.opacity = 1 - age / HOLE_OUT_SPARK_LIFE;
+  });
+}
+
+// Synthesized rather than an audio file (nothing to bundle/host) — a short ascending three-note
+// chime, the same kind of quick "success" cue lots of casual games use. Wrapped defensively
+// since browsers block audio before any user gesture has happened on the page at all; by the
+// time a hole-out is even possible someone's already clicked Start Round/etc., so in practice
+// this should always be allowed to play.
+var holeOutAudioCtx = null;
+function playHoleOutSound() {
+  try {
+    if (!holeOutAudioCtx) holeOutAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var ctx = holeOutAudioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    var now = ctx.currentTime;
+    [880, 1174.66, 1567.98].forEach(function (freq, i) {
+      var t = now + i * 0.09;
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.35, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.55);
+    });
+  } catch (e) { /* Web Audio unavailable/blocked — silent fallback, no animation depends on this */ }
+}
+
+function triggerHoleOutAnimation(x, z) {
+  holeOutActive = true;
+  holeOutStartT = clock.getElapsedTime();
+  holeOutStartPos = { x: ballMesh.position.x, y: ballMesh.position.y, z: ballMesh.position.z };
+  triggerHoleOutBurst(x, z);
+  playHoleOutSound();
+}
+
+function updateHoleOutAnimation() {
+  if (!holeOutActive) return;
+  var p = (clock.getElapsedTime() - holeOutStartT) / HOLE_OUT_SINK_DURATION;
+  if (p >= 1) {
+    holeOutActive = false;
+    ballMesh.visible = false;
+    return;
+  }
+  // Slides to the pin's exact center over the first half, then drops straight down below the
+  // rim — reads as "rolled in, then fell" rather than sinking on an angle.
+  var slide = Math.min(p * 2, 1);
+  var drop = p * p;
+  ballMesh.position.x = holeOutStartPos.x + (HOLE_POS.x - holeOutStartPos.x) * slide;
+  ballMesh.position.z = holeOutStartPos.z + (HOLE_POS.z - holeOutStartPos.z) * slide;
+  ballMesh.position.y = holeOutStartPos.y - drop * (BALL_RADIUS + 0.5);
+  ballMesh.rotation.y += 0.3;
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -2020,6 +2176,8 @@ function animate() {
   }
   updateContactBurst();
   updateWaterSplash(dt);
+  updateHoleOutAnimation();
+  updateHoleOutBurst(dt);
   drawMinimapFrame();
   updateAimTrail();
   renderer.render(scene, camera);
