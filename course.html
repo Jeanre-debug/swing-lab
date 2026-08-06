@@ -458,9 +458,13 @@ viewport.appendChild(renderer.domElement);
 var scene = new THREE.Scene();
 var skyColor = 0x8fdcf2;
 scene.background = new THREE.Color(skyColor);
-scene.fog = new THREE.Fog(skyColor, 70, 240);
+// Far cutoff used to be 240 — solid fog by the time a long hole's fairway had barely started,
+// so a 650m par 5 would look like it ended in a wall of haze a third of the way to the green.
+// Pushed out well past the longest a builder-made hole can now be (695m), with the camera's own
+// far clip plane extended to match so nothing gets clipped before the fog even finishes it off.
+scene.fog = new THREE.Fog(skyColor, 70, 750);
 
-var camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 800);
+var camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 900);
 
 window.addEventListener("resize", function () {
   camera.aspect = window.innerWidth / window.innerHeight;

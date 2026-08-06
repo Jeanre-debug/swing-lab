@@ -299,7 +299,11 @@
   var SUPABASE_KEY = "sb_publishable_CU0FsI7tgx0XKP2cM0_dqA_k05IuMgj";
   var SB_HEADERS = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
 
-  var COLS = 24, ROWS = 50, TILE_SIZE = 5;
+  // ROWS is the tee->pin (length) axis — 140 rows at the default 5m tile size reaches (140-1)*5
+  // = 695m edge-to-edge, comfortably covering a 650m hole with room for the tee/pin markers to
+  // sit a little short of the actual grid edge.
+  var DEFAULT_COLS = 24, DEFAULT_ROWS = 140, DEFAULT_TILE_SIZE = 5;
+  var COLS = DEFAULT_COLS, ROWS = DEFAULT_ROWS, TILE_SIZE = DEFAULT_TILE_SIZE;
   var CELL_PX = 14;
 
   var TYPE_COLOR = {
@@ -557,11 +561,16 @@
 
   // ---- New ----
   els.newBtn.addEventListener("click", function () {
+    // Loading an existing course adopts ITS grid size (loadCourse below) — without resetting
+    // back to the defaults here, "New" right after loading a smaller/older course would keep
+    // building on that stale, smaller grid instead of a fresh full-size one.
+    COLS = DEFAULT_COLS; ROWS = DEFAULT_ROWS; TILE_SIZE = DEFAULT_TILE_SIZE;
     courseId = null; courseName = ""; isPublic = false;
     holes = [newHole()]; activeHole = 0;
     els.name.value = ""; els.par.value = "4";
     els.visPrivate.classList.add("active"); els.visPublic.classList.remove("active");
     els.playBtn.disabled = true;
+    resizeCanvas();
     renderHoleTabs(); draw(); updateStats(); clearMessage();
   });
 
