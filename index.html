@@ -1669,10 +1669,17 @@
       }
     } else if (state === "result") {
       if (t > resultUntil) {
-        state = "ready";
+        // Doesn't re-arm on its own anymore — a fresh press (then the ready countdown below)
+        // is required before every swing after the first, so the game can't fire on stray
+        // motion while you're just putting the phone back in position for the next shot.
+        state = "awaiting_ready";
         els.power.classList.remove("impact");
-        setPhase("ARMED — SWING", "armed");
-        setDot("armed");
+        setPhase("PRESS WHEN READY", "hot");
+        setDot(null);
+        els.action.textContent = "Ready for Next Swing";
+        els.action.classList.remove("recal");
+        els.action.disabled = false;
+        els.hint.textContent = "Press when you're set — a 3 second countdown starts, then swing.";
       }
     }
 
@@ -1800,8 +1807,42 @@
     }
   }
 
+  // 3-2-1 pause between shots — press when set, then swing once the countdown ends and the
+  // phone (tries to) buzz. navigator.vibrate is silently a no-op on iOS Safari — there's no web
+  // vibration API Apple exposes there — so the dot's pulse animation below is the real "go"
+  // signal on iPhone; the vibrate call still fires for whatever device this ends up running on
+  // that does support it.
+  var countdownActive = false;
+  function startReadyCountdown() {
+    countdownActive = true;
+    els.action.disabled = true;
+    var n = 3;
+    setPhase("GET READY: " + n, "hot");
+    var iv = setInterval(function () {
+      n--;
+      if (n > 0) {
+        setPhase("GET READY: " + n, "hot");
+      } else {
+        clearInterval(iv);
+        countdownActive = false;
+        if (navigator.vibrate) navigator.vibrate(120);
+        state = "ready";
+        setPhase("ARMED — SWING", "armed");
+        setDot("armed");
+        els.action.textContent = "Recalibrate";
+        els.action.classList.add("recal");
+        els.action.disabled = false;
+        els.hint.textContent = "Take your swing — impact triggers the readout automatically.";
+      }
+    }, 1000);
+  }
+
   els.action.addEventListener("click", function () {
-    if (state === "calibrating") return;
+    if (state === "calibrating" || countdownActive) return;
+    if (state === "awaiting_ready") {
+      startReadyCountdown();
+      return;
+    }
     start();
   });
 
