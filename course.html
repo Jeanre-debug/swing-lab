@@ -946,6 +946,12 @@ function recomputeAimFromBallPos() {
   RIGHT = { x: -FWD.z, z: FWD.x };
   aimOffsetDeg = 0;
   document.getElementById("aimVal").textContent = "0°";
+  // loadPlayerTurn repositions the ball to whichever player's turn it now is, but that alone
+  // never touched the visible "To Pin" readout — it just sat frozen on whatever the PREVIOUS
+  // player's shot last showed, which is a different number the moment the rotation moves to a
+  // different player with a different lie. This is the one place that recomputes "distance to
+  // pin from wherever the ball actually is now," so the display belongs right here too.
+  els.toPin.innerHTML = HOLE_DISTANCE.toFixed(1) + '<span class="unit">m</span>';
 }
 
 // Puts the single shared ball body wherever the now-current player's own lie last left it
