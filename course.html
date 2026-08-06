@@ -246,6 +246,39 @@
   .lobby-roster-row.offline .dot { background: var(--muted-dim, var(--muted)); }
   .lobby-empty { font-size: 12.5px; color: var(--muted); text-align: center; padding: 8px 0; }
 
+  .course-picker-btn {
+    appearance: none;
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--paper);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 11px 14px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+  }
+  .course-picker-btn .change { font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--sand); }
+  .course-picker-btn:focus-visible { outline: 2px solid var(--sand); }
+
+  .course-select-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%;
+    appearance: none;
+    background: var(--panel-raised); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 12px;
+    text-align: left;
+    color: var(--paper);
+    font-family: var(--sans);
+  }
+  .course-select-row:focus-visible { outline: 2px solid var(--sand); }
+  .course-select-row .name { font-size: 14px; font-weight: 600; }
+  .course-select-row .meta { display: block; font-size: 11px; font-family: var(--mono); color: var(--muted); margin-top: 2px; }
+  .course-select-row .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sand); flex-shrink: 0; }
+  .course-select-row.active { border-color: var(--turf); background: color-mix(in srgb, var(--turf) 14%, var(--panel-raised)); }
+
   .difficulty-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0 4px; }
   .difficulty-btn {
     appearance: none;
@@ -345,6 +378,12 @@
       <div class="code" id="lobbyRoomCode">&#8211;&#8211;&#8211;&#8211;</div>
       <div class="hint">Open the phone page, then join with this code</div>
     </div>
+    <div class="eyebrow">Course</div>
+    <button class="course-picker-btn" id="coursePickerBtn">
+      <span id="currentCourseName">Default Hole</span>
+      <span class="change">Change &rarr;</span>
+    </button>
+
     <div class="eyebrow">Players</div>
     <div class="lobby-roster" id="lobbyRoster">
       <div class="lobby-empty">Waiting for players to join&hellip;</div>
@@ -355,6 +394,16 @@
     <div class="difficulty-hint" id="difficultyHint"></div>
 
     <button class="btn primary" id="startRoundBtn" disabled>Start Round</button>
+  </div>
+</div>
+
+<div class="overlay" id="courseSelectOverlay">
+  <div class="modal panel">
+    <div class="eyebrow">Select a Course</div>
+    <div class="lobby-roster" id="courseSelectList">
+      <div class="lobby-empty">Loading&hellip;</div>
+    </div>
+    <button class="btn" id="closeCourseSelect">Cancel</button>
   </div>
 </div>
 
@@ -1980,24 +2029,106 @@ var clock;
 
 var SUPABASE_URL = "https://vzcyqgdmktalklkppdra.supabase.co";
 var SUPABASE_KEY = "sb_publishable_CU0FsI7tgx0XKP2cM0_dqA_k05IuMgj";
+var SB_HEADERS = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
+
+function fetchCourseAndHoles(courseId) {
+  return Promise.all([
+    fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + encodeURIComponent(courseId) + "&select=*", { headers: SB_HEADERS }).then(function (r) { return r.json(); }),
+    fetch(SUPABASE_URL + "/rest/v1/holes?course_id=eq." + encodeURIComponent(courseId) + "&select=*&order=hole_number.asc", { headers: SB_HEADERS }).then(function (r) { return r.json(); })
+  ]).then(function (results) {
+    return { courseRow: results[0][0], holeRows: results[1] };
+  });
+}
+
+// ---- Lobby course picker ----
+// Only reachable from the lobby overlay (hidden once a round starts), so there's no need to
+// guard this against being triggered mid-round — the button it's wired to simply isn't visible
+// then.
+function setCourseLabel(name) {
+  document.getElementById("currentCourseName").textContent = name;
+}
+
+function useDefaultHole() {
+  loadedCourseId = null;
+  roundHoles = [{ isDefault: true, par: 4 }];
+  document.title = "Swing Lab";
+  history.replaceState(null, "", location.pathname);
+  setCourseLabel("Default Hole");
+  loadHole(0);
+  document.getElementById("courseSelectOverlay").classList.remove("show");
+}
+
+function switchToCourse(courseId, name) {
+  fetchCourseAndHoles(courseId).then(function (data) {
+    if (!data.courseRow || !data.holeRows.length) return;
+    loadedCourseId = data.courseRow.id;
+    roundHoles = data.holeRows;
+    document.title = "Swing Lab — " + (data.courseRow.name || "Course");
+    // Keeps a reload (or sharing the URL) on the same course, same as arriving via a
+    // course=<id> link directly would.
+    history.replaceState(null, "", "?course=" + encodeURIComponent(courseId));
+    setCourseLabel(name || data.courseRow.name || "Course");
+    loadHole(0);
+    document.getElementById("courseSelectOverlay").classList.remove("show");
+  }).catch(function () { /* leave whatever course was already loaded in place */ });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+function openCourseSelect() {
+  var overlay = document.getElementById("courseSelectOverlay");
+  var list = document.getElementById("courseSelectList");
+  overlay.classList.add("show");
+  list.innerHTML = '<div class="lobby-empty">Loading&hellip;</div>';
+
+  fetch(SUPABASE_URL + "/rest/v1/courses?select=id,name,is_public,updated_at&order=updated_at.desc&limit=50", { headers: SB_HEADERS })
+    .then(function (r) { return r.json(); })
+    .then(function (rows) {
+      var html = '<button class="course-select-row' + (!loadedCourseId ? " active" : "") + '" id="pickDefaultHole"><span class="name">Default Hole</span><span class="tag">Built-in</span></button>';
+      html += rows.map(function (row) {
+        var active = row.id === loadedCourseId;
+        var safeName = escapeHtml(row.name);
+        return '<button class="course-select-row' + (active ? " active" : "") + '" data-id="' + row.id + '" data-name="' + safeName + '">' +
+          '<span><span class="name">' + safeName + '</span><span class="meta">' + new Date(row.updated_at).toLocaleDateString() + '</span></span>' +
+          (row.is_public ? '<span class="tag">Public</span>' : "") +
+          "</button>";
+      }).join("");
+      list.innerHTML = html;
+
+      document.getElementById("pickDefaultHole").addEventListener("click", useDefaultHole);
+      list.querySelectorAll(".course-select-row[data-id]").forEach(function (btn) {
+        btn.addEventListener("click", function () { switchToCourse(btn.dataset.id, btn.dataset.name); });
+      });
+    })
+    .catch(function () {
+      list.innerHTML = '<div class="lobby-empty">Couldn’t reach Supabase.</div>';
+    });
+}
+
+document.getElementById("coursePickerBtn").addEventListener("click", openCourseSelect);
+document.getElementById("closeCourseSelect").addEventListener("click", function () {
+  document.getElementById("courseSelectOverlay").classList.remove("show");
+});
 
 (async function boot() {
   var courseId = new URLSearchParams(location.search).get("course");
+  var courseName = null;
   if (courseId) {
     try {
-      var sbHeaders = { apikey: SUPABASE_KEY, Authorization: "Bearer " + SUPABASE_KEY };
-      var results = await Promise.all([
-        fetch(SUPABASE_URL + "/rest/v1/courses?id=eq." + encodeURIComponent(courseId) + "&select=*", { headers: sbHeaders }).then(function (r) { return r.json(); }),
-        fetch(SUPABASE_URL + "/rest/v1/holes?course_id=eq." + encodeURIComponent(courseId) + "&select=*&order=hole_number.asc", { headers: sbHeaders }).then(function (r) { return r.json(); })
-      ]);
-      var courseRow = results[0][0], holeRows = results[1];
-      if (courseRow && holeRows.length) {
-        loadedCourseId = courseRow.id;
-        roundHoles = holeRows;
-        document.title = "Swing Lab — " + (courseRow.name || "Course");
+      var data = await fetchCourseAndHoles(courseId);
+      if (data.courseRow && data.holeRows.length) {
+        loadedCourseId = data.courseRow.id;
+        roundHoles = data.holeRows;
+        courseName = data.courseRow.name || "Course";
+        document.title = "Swing Lab — " + courseName;
       }
     } catch (e) { /* falls through to the default hole below */ }
   }
+  setCourseLabel(courseName || "Default Hole");
   startGameplay();
 })();
 </script>
