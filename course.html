@@ -586,6 +586,46 @@ function tileTypeAt(worldX, worldZ) {
 // Real, not just cosmetic: what you're hitting FROM changes how much speed the shot keeps.
 var TERRAIN_SPEED_MULT = { fairway: 1.0, green: 1.0, rough: 0.82, bunker: 0.55, water: 1.0, tree: 0.7, ob: 0.8 };
 
+// How the ball behaves LANDING on/rolling across each terrain — separate from
+// TERRAIN_SPEED_MULT above, which is about what you're hitting FROM. Real sand absorbs almost
+// all of a landing ball's energy (minimal bounce, grabs it fast); a green is cut short
+// specifically to roll true and fast with barely any bounce since a putt/chip rarely leaves the
+// ground; rough's longer grass both grabs the ball more and cushions any bounce more than a
+// fairway does. green's friction/restitution here were fit against a real reference point (a
+// Stimpmeter releases a ball at 1.83 m/s; PGA Tour greens run Stimp 10-12, meaning that ball
+// rolls ~3-3.7m) rather than guessed — the rest are reasoned from the same real-world
+// fairway/rough/bunker energy-absorption differences but not separately verified.
+// linearDamping/angularDamping are here too, not just friction/restitution — turns out that
+// once a cannon-es sphere is rolling smoothly (past the initial skid/bounce), ground CONTACT
+// friction stops mattering almost entirely; the ball body's own damping is what actually
+// governs how far a rolling ball travels. A per-terrain friction table alone would have given a
+// green and a bunker nearly identical roll-out once a ball settled into rolling on either.
+// fairway and green's numbers are simulation-checked against real references (fairway against
+// all 12 clubs' labeled avgDistance; green against a Stimpmeter's real 1.83 m/s release rolling
+// ~3-3.7m on a fast tour green) — the rest are reasoned from the same real energy-absorption
+// differences (thicker rough grabs the ball more, sand grabs it far more) but not individually
+// verified the same way.
+var TERRAIN_CONTACT = {
+  fairway: { friction: 0.15, restitution: 0.25, linearDamping: 0.18, angularDamping: 0.4 },
+  green: { friction: 0.4, restitution: 0.08, linearDamping: 0.13, angularDamping: 0.33 },
+  rough: { friction: 0.3, restitution: 0.15, linearDamping: 0.24, angularDamping: 0.5 },
+  bunker: { friction: 0.7, restitution: 0.05, linearDamping: 0.4, angularDamping: 0.7 },
+  tree: { friction: 0.35, restitution: 0.12, linearDamping: 0.26, angularDamping: 0.5 },
+  ob: { friction: 0.3, restitution: 0.15, linearDamping: 0.24, angularDamping: 0.5 },
+  water: { friction: 0.15, restitution: 0.25, linearDamping: 0.18, angularDamping: 0.4 } // never actually settles here — see handleWaterEntry
+};
+
+// Loft governs spin far more than it governs anything else about a shot — a driver's low loft
+// and low spin let it release and bounce forward on landing; a lofted wedge's high spin makes it
+// bite down and stop with barely a bounce. This scales each terrain's base restitution by loft,
+// so the SAME bunker or fairway plays differently for a driver than a lob wedge, same as real
+// turf interaction does. Reasoned from real spin-rate figures (driver ~3600rpm vs a 9-iron
+// ~10800rpm) rather than fit to a specific measurement — a starting curve, not a verified one.
+function loftRestitutionMult(loftDeg) {
+  return clamp(1.3 - loftDeg / 50, 0.35, 1.3);
+}
+var currentShotLoftDeg = 10.5; // whatever the most recent shot's club loft was, for the bounce above
+
 // Shared between both hole builders below.
 function addHoleAndFlag(pos) {
   // Sized off CUP_RADIUS (ball radius + 0.5) so the visible hole actually matches how close the
@@ -977,15 +1017,26 @@ function saveCurrentPlayerBallState() {
   p.ballPos = { x: ballBody.position.x, y: ballBody.position.y, z: ballBody.position.z };
 }
 
+// Real stroke play: whoever's ball is FARTHEST from the pin plays next, not a fixed rotation —
+// recomputed after every single shot, since any shot can change who that is. Deliberately does
+// NOT exclude the player who just went: if their shot was bad enough that they're still
+// farthest back than everyone else, it's correctly still their turn again immediately, same as
+// it would be for real. A tie (only really possible at the very first shot of a hole, when
+// everyone's still at the tee) resolves to the lowest player index — startNextHoleForAll below
+// picks who ACTUALLY tees off first via honor, this is only ever consulted after that.
 function nextPlayerIndex() {
-  for (var step = 1; step <= players.length; step++) {
-    var idx = (currentPlayerIdx + step) % players.length;
+  var best = -1, bestDist = -1;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
     // A disconnected player can't take a shot the rotation is waiting on — skip them so the
     // round keeps moving for whoever's left; they slot back in on their next natural turn if
     // they rejoin (same reasoning as onHoleComplete's rest-of-round-continues use of this).
-    if (!players[idx].finishedHole && players[idx].connected) return idx;
+    if (p.finishedHole || !p.connected) continue;
+    var pos = p.ballPos || { x: TEE_POS.x, z: TEE_POS.z };
+    var dist = Math.hypot(HOLE_POS.x - pos.x, HOLE_POS.z - pos.z);
+    if (dist > bestDist) { bestDist = dist; best = i; }
   }
-  return -1; // everyone left has either holed out or disconnected
+  return best; // -1 if everyone left has either holed out or disconnected
 }
 
 var advancingDueToDisconnect = false;
@@ -1046,8 +1097,29 @@ function loadPlayerTurn() {
 }
 
 function startNextHoleForAll(idx) {
+  // Honor: whoever scored best on the hole that just finished tees off first on this one — real
+  // stroke-play etiquette. Only decides the very first shot of the new hole; every shot after
+  // that goes back to farthest-from-the-pin via nextPlayerIndex, same as the rest of the hole.
+  // currentHoleIdx is still the hole that just finished here — loadHole below is what advances
+  // it to idx, so this has to run before that call, not after.
+  var honorIdx = 0;
+  var bestScore = Infinity;
+  for (var i = 0; i < players.length; i++) {
+    var prevScore = players[i].holeScores[currentHoleIdx];
+    if (prevScore && prevScore.strokes < bestScore) {
+      bestScore = prevScore.strokes;
+      honorIdx = i;
+    }
+  }
+
   players.forEach(function (p) { p.finishedHole = false; p.strokes = 0; p.ballPos = null; });
-  currentPlayerIdx = 0;
+  // If honor lands on someone who's currently disconnected, don't leave the round waiting on
+  // them from the first shot of the hole — same reasoning as Start Round's own connected-player
+  // fallback below.
+  if (!players[honorIdx].connected) {
+    for (var ci = 0; ci < players.length; ci++) { if (players[ci].connected) { honorIdx = ci; break; } }
+  }
+  currentPlayerIdx = honorIdx;
   loadHole(idx); // resets ball to the new hole's tee via resetBall()
   updateTurnHud();
   updatePlayersPanel();
@@ -1163,7 +1235,7 @@ document.getElementById("playAgain").addEventListener("click", function () {
 
 // ---- Ball + physics + gameplay bootstrap ----
 // Deferred behind a function because loading a course from Supabase is async.
-var ballMesh, world, ballBody;
+var ballMesh, world, ballBody, groundContact;
 
 function startGameplay() {
   ballMesh = new THREE.Mesh(
@@ -1191,18 +1263,17 @@ function startGameplay() {
   });
   world.addBody(ballBody);
 
-  // Re-derived from an actual cannon-es simulation (not hand-derived math) after every club
-  // was found to land at roughly HALF its labeled avgDistance, even at full power on fairway —
-  // 0.45 ground friction was robbing most of a shot's speed on its very first bounce,
-  // especially for steep-descending short irons/wedges. Checked against all 12 clubs at full
-  // power; still not perfectly uniform (driver runs a bit hot, wedges a bit short) since one
-  // global friction/damping pair can't fully equalize every loft, but it's far closer than
-  // before across the board.
-  var contact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
+  // Base values re-derived from an actual cannon-es simulation (not hand-derived math) after
+  // every club was found to land at roughly HALF its labeled avgDistance, even at full power on
+  // fairway. Kept as a module-level reference (groundContact) rather than a local var, because
+  // its friction/restitution now get rewritten every frame in animate() based on whatever
+  // terrain the ball is actually over — see TERRAIN_CONTACT below for why a single fixed pair
+  // was never going to be right for a bunker AND a green AND a fairway at once.
+  groundContact = new CANNON.ContactMaterial(groundBody.material || new CANNON.Material(), ballBody.material || new CANNON.Material(), {
     friction: 0.15,
     restitution: 0.25
   });
-  world.addContactMaterial(contact);
+  world.addContactMaterial(groundContact);
 
   if (els.serverUrl.value) connect();
   clock = new THREE.Clock();
@@ -1815,13 +1886,11 @@ function launchShot(shot) {
   ballBody.velocity.set(0, 0, 0);
   ballBody.angularVelocity.set(0, 0, 0);
   ballBody.wakeUp();
-  // Greens are mown short specifically to roll fast — a putt should travel much farther than a
-  // full-swing chip at the same speed, which the shared fairway/rough damping doesn't capture
-  // (there's no per-tile terrain friction yet, just this per-shot approximation). Tuned to land
-  // roughly in the 30m-at-full-power range described as the target; unverified against a real
-  // putt like every other constant here.
-  ballBody.linearDamping = shot.club === "putter" ? 0.045 : 0.18;
-  ballBody.angularDamping = shot.club === "putter" ? 0.15 : 0.4;
+  // Ball damping/friction/restitution are no longer set here at all — TERRAIN_CONTACT in
+  // animate() now sets all four dynamically every frame from whatever terrain the ball is
+  // actually on, which is the physically correct place for "how does this lie roll" to live
+  // (a green rolls fast for anyone's ball sitting on it, not just one hit by a putter).
+  currentShotLoftDeg = loftDeg;
   settled = false;
   cameraMode = "flight";
   shotStartPos = ballBody.position.clone();
@@ -2083,6 +2152,17 @@ function animate() {
       ballBody.velocity.x += shotRight.x * flightCurveStrength * CURVE_ACCEL * simDt;
       ballBody.velocity.z += shotRight.z * flightCurveStrength * CURVE_ACCEL * simDt;
     }
+
+    // Re-set every frame from whatever terrain the ball is CURRENTLY over — cheap (a tile
+    // lookup and four property writes), and it's what makes a shot that flies from fairway
+    // into a bunker actually feel different the instant it lands, not just "different if it
+    // happened to start there." Loft only scales restitution (bounce), not the damping values
+    // — spin mostly matters for how a landing bites, not for later rolling deceleration.
+    var groundHere = TERRAIN_CONTACT[tileTypeAt(ballBody.position.x, ballBody.position.z)] || TERRAIN_CONTACT.fairway;
+    ballBody.linearDamping = groundHere.linearDamping;
+    ballBody.angularDamping = groundHere.angularDamping;
+    groundContact.friction = groundHere.friction;
+    groundContact.restitution = groundHere.restitution * loftRestitutionMult(currentShotLoftDeg);
   }
 
   world.step(1 / 60, simDt, fastForward ? 15 : 5);
