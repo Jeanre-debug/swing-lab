@@ -1028,11 +1028,12 @@
     practiceEls.toggle.classList.toggle("toggle-on", practiceMode);
   });
 
-  // Mirrors the righty PATH_SIGN/FACE_SIGN convention above — a left-handed grip is the
-  // physical mirror of the right-handed one, so the sign a lefty's swing produces should be
-  // the mirror too. That's a reasoned guess extrapolated from the (empirically-verified)
-  // righty case, not itself tested on a real left-handed swing — flip HAND_MIRROR's sign here
-  // if a lefty's face/path readings come out backwards.
+  // Mirrors the righty PATH_SIGN/FACE_SIGN convention above. Stronger footing than before now
+  // that the mount itself is a deliberate physical mirror image (screen right for righties,
+  // screen left for lefties, otherwise identical) rather than just an assumption about how a
+  // bare-handed grip mirrors — but it's still a extrapolation from the righty case rather than
+  // something separately tested on a real left-handed swing. Flip this sign if a lefty's
+  // face/path readings come out backwards once there's real data to check against.
   var isLefty = localStorage.getItem("swingLabLefty") === "1";
   var handEls = { toggle: $("handToggle"), label: $("handToggleLabel") };
   function applyHandUI() {
@@ -1202,8 +1203,14 @@
   var canvas = $("scope");
   var ctx = canvas.getContext("2d");
 
-  // Full-scale net-acceleration reading (m/s^2) mapped to a 100-point power score.
-  // Rough guess from a hand swing's accelerometer delta — tune once real swings are logged.
+  // Full-scale net-acceleration reading (m/s^2) mapped to a 100-point power score. Tuned
+  // against a bare-in-hand swing — a shaft-mounted phone sits farther from the hands' pivot
+  // point, so the same swing now sweeps it through a wider arc at higher linear speed
+  // (centripetal accel scales with distance from the pivot for a given angular speed), meaning
+  // this almost certainly needs to go UP or power will peg near 100 for anything but a very
+  // soft swing. Direction is a confident physics call; the exact number isn't — watch the live
+  // Swing Meter/debug log on the actual bracket and raise this until a normal-effort full swing
+  // lands roughly mid-gauge, not maxed out.
   var POWER_SCALE = 26;
   // A backswing has its own rise-then-settle (especially the pause at the top), which on its
   // own crosses armThreshold and then falls — indistinguishable from post-impact deceleration
@@ -1239,19 +1246,29 @@
   var FACE_EPS = 8;
   // Face-to-path (curve) beyond this reads as a full hook/slice rather than a gentle draw/fade.
   var SEVERE_CURVE_EPS = FACE_EPS * 2.5;
-  // This mounting (phone upside down, screen toward the trail/right hand, right-handed stance)
-  // fixes which physical spin direction is "closing" vs "opening" and which yaw direction is
-  // in-to-out vs out-to-in. FACE_SIGN was left unverified after the quaternion rewrite (that
-  // computation genuinely changed, unlike path's) and every debug-log screenshot since has
-  // shown almost exclusively severe HOOK -- a strongly closed face on nearly every single
-  // swing, which isn't plausible as real consistent technique but is exactly what a backwards
-  // face sign produces. Flipped to -1 on that evidence. Path's underlying physics didn't
-  // change in that rewrite (still "rotation about the fixed world-vertical axis," just
-  // computed via one consistent mechanism instead of a separate live-projection scheme), and
-  // in-to-out is a normal path for plenty of golfers, not the kind of implausible pattern that
-  // flagged face — so it's left alone.
+  // MOUNTING (changed): phone rigidly strapped to the shaft itself now, not held bare in the
+  // hand — portrait orientation, the phone's own top-to-bottom axis (local Y) running along the
+  // shaft's length, screen facing the golfer's right side for a right-handed setup and the
+  // left side for a left-handed one (i.e. the two mounts are true physical mirror images of
+  // each other, not just a software convention). Two real, separate consequences:
+  //
+  // 1. Face = twist about local Y (unchanged code, below) is now the CORRECT axis by
+  //    construction, not an approximation of "however the phone happened to sit in the hand."
+  //    Path's math (twist about the address-time gravity direction) never depended on mounting
+  //    orientation at all, so it needed no algorithm change either.
+  // 2. But the SIGN of both — whether closing the face reads as positive or negative twist,
+  //    whether in-to-out reads as positive or negative path — is anchored to the phone's own
+  //    local X/Y/Z axes, and those sit completely differently in space now than they did bare
+  //    in-hand. The old FACE_SIGN=-1 was empirically verified (via real debug-log data showing
+  //    universal HOOK) for THAT mount; it has no claim to still being correct for this one, and
+  //    carrying it over unchanged would just be a new unverified guess wearing an old, trusted-
+  //    looking number. Reset both to a neutral, explicitly-unverified 1 instead — first real
+  //    test swings on the actual bracket should confirm or flip each one independently, exactly
+  //    like FACE_SIGN was corrected before: hit a few real, known shots (a deliberate slice, a
+  //    deliberate hook, a straight one), check what the debug log/shot label says, and flip
+  //    whichever sign doesn't match what actually happened.
   var PATH_SIGN = 1;
-  var FACE_SIGN = -1;
+  var FACE_SIGN = 1;
   var WINDOW_MS = 3000;
   var RESULT_HOLD_MS = 1100;
   // How far back before impact path/face rotation gets integrated from. A real backswing
@@ -1532,8 +1549,10 @@
     // multi-axis rotation a real swing has, unlike integrating one raw rate component alone.
     var orientQ = computeOrientationOverWindow(windowSamples);
 
-    // Face = twist about the shaft axis, which by construction of starting the replay at
-    // identity IS just the window's own local Y axis — no separate reference capture needed.
+    // Face = twist about the shaft axis. Mounted rigidly along the shaft (see the mounting
+    // note by FACE_SIGN below) the phone's own local Y axis genuinely IS the shaft axis now,
+    // not just a stand-in for it — and by construction of starting the replay at identity, that
+    // axis is simply (0,1,0) with no separate reference capture needed.
     var faceTotal = twistAngleDeg(orientQ, { x: 0, y: 1, z: 0 });
 
     // Path = twist about true vertical, referenced against gravity as measured at the start
@@ -1647,13 +1666,6 @@
       // this condition disabled it, letting that transition spike get treated as the real peak
       // for the rest of the swing. A genuine return to address-stillness is real evidence of a
       // pause regardless of how big the peak-so-far was, so the gate check is gone.
-      if (net < noiseStd * QUIET_MULTIPLIER) {
-        swingPeak = { t: t, net: net };
-        fallCount = 0;
-        riseStartT = t;
-        attemptRearmCount++;
-      }
-
       var stalled = t - swingStart.t > 2500;
       if (stalled) {
         logDebugEntry("STALLED", t, null);
@@ -1665,6 +1677,22 @@
         if (fallCount >= FALL_COUNT_MIN && (t - swingPeak.t) < 500 && swingPeak.net > gateNow
             && (t - swingStart.t) > MIN_SWING_MS && riseOk && hasReversed) {
           finalizeSwing(t);
+        } else if (net < noiseStd * QUIET_MULTIPLIER) {
+          // Checked AFTER (not before) the finalize condition above on purpose — this used to
+          // run first every sample, which meant a real, already-qualifying peak (fallCount and
+          // everything else already satisfied) could still get its OWN swingPeak silently
+          // erased by this reset if the swing's post-impact deceleration happened to already be
+          // back near baseline on the very sample fallCount finally cleared. A short, controlled
+          // motion (a chip, a putt) decelerates fast enough for that to be a real, not
+          // theoretical, race — and losing the race meant the swing just silently never
+          // registered. Checking finalize first means a genuinely complete swing always wins;
+          // this re-arm only ever fires now for a pause that occurs BEFORE the swing was ready
+          // to finalize anyway, which was always its actual intent (catching a false peak at the
+          // top of the backswing, before the real downswing has even started).
+          swingPeak = { t: t, net: net };
+          fallCount = 0;
+          riseStartT = t;
+          attemptRearmCount++;
         }
       }
     } else if (state === "result") {
