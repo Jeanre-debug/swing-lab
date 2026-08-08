@@ -2084,6 +2084,13 @@ function connect() {
         if (!currentPlayer() || msg.playerId !== currentPlayer().id) return;
         els.powerState.textContent = msg.power > 4 ? "Swinging" : "Armed";
         setPowerBar(msg.power, true);
+      } else if (msg.type === "aim") {
+        // Same turn/settled gating as swing — reuses setAim wholesale (wraparound, minimap, aim
+        // trail all update exactly as if the laptop's own arrow keys/buttons had been pressed),
+        // so the phone is just an alternate input for the same one aim value, not a second one
+        // that could drift out of sync with it.
+        if (!currentPlayer() || msg.playerId !== currentPlayer().id || !settled) return;
+        setAim(aimOffsetDeg + (msg.delta || 0));
       }
     } catch (e) { /* ignore malformed frames */ }
   };

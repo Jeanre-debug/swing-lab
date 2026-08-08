@@ -375,6 +375,35 @@
   .mini-toggle.toggle-on .mini-val { color: var(--sand); }
   .mini-toggle:focus-visible { outline: 2px solid var(--sand); }
 
+  .aim-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .aim-btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-raised);
+    color: var(--paper);
+    font-size: 18px;
+    font-weight: 700;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .aim-btn:focus-visible { outline: 2px solid var(--sand); }
+  .aim-row .aim-readout {
+    flex: 1;
+    text-align: center;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 11px 0;
+  }
+  .aim-row.disabled { opacity: 0.4; pointer-events: none; }
+
   .picker-overlay {
     position: fixed;
     inset: 0;
@@ -742,6 +771,12 @@
       </button>
     </div>
 
+    <div class="aim-row" id="aimRow">
+      <button class="aim-btn" id="phoneAimLeft">&#8249;</button>
+      <div class="aim-readout">AIM <span id="phoneAimVal">0&deg;</span></div>
+      <button class="aim-btn" id="phoneAimRight">&#8250;</button>
+    </div>
+
     <button id="action">Tap to Begin</button>
     <div class="hint" id="hint">Hold the phone like a club grip, then keep it still while it calibrates.</div>
 
@@ -841,7 +876,8 @@
     wsStatus: $("wsStatus"), wsStatusText: $("wsStatusText"), wsUrl: $("wsUrl"), wsConnect: $("wsConnect"),
     joinPanel: $("joinPanel"), joinName: $("joinName"), joinCode: $("joinCode"), joinBtn: $("joinBtn"), joinError: $("joinError"),
     waitingPanel: $("waitingPanel"), waitingRoomCode: $("waitingRoomCode"), waitingHint: $("waitingHint"), rosterList: $("rosterList"),
-    mainPanel: $("mainPanel"), postJoinExtras: $("postJoinExtras"), turnBanner: $("turnBanner")
+    mainPanel: $("mainPanel"), postJoinExtras: $("postJoinExtras"), turnBanner: $("turnBanner"),
+    aimRow: $("aimRow"), aimVal: $("phoneAimVal"), aimLeft: $("phoneAimLeft"), aimRight: $("phoneAimRight")
   };
 
   // ---- Multiplayer room state ----
@@ -890,6 +926,42 @@
       els.turnBanner.classList.remove("mine");
     }
   }
+
+  // ---- Aim ----
+  // The laptop stays the single source of truth for its own aimOffsetDeg — course.html's
+  // existing setAim() already handles wraparound, the minimap, and the aim trail. This just
+  // sends the same +-2deg deltas its own on-screen arrow buttons would produce, so the phone is
+  // an alternate INPUT for that one value rather than a second copy of it that could drift out
+  // of sync. The local phoneAimDeg here is purely this phone's own display, reset to 0 whenever
+  // a fresh turn starts (course.html resets aimOffsetDeg to 0 for every new turn too, so the two
+  // start in lockstep without needing an explicit sync round-trip).
+  var AIM_STEP = 2;
+  var phoneAimDeg = 0;
+  function updatePhoneAimUI() {
+    els.aimVal.textContent = Math.round(phoneAimDeg) + "°";
+    els.aimRow.classList.toggle("disabled", !isMyTurn);
+  }
+  function sendAim(delta) {
+    if (!isMyTurn) return;
+    phoneAimDeg = ((phoneAimDeg + delta + 180) % 360 + 360) % 360 - 180;
+    updatePhoneAimUI();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "aim", delta: delta }));
+    }
+  }
+  function holdToRepeatAim(el, step) {
+    var interval = null;
+    function start() {
+      sendAim(step);
+      interval = setInterval(function () { sendAim(step); }, 60);
+    }
+    function stop() { clearInterval(interval); interval = null; }
+    el.addEventListener("pointerdown", start);
+    ["pointerup", "pointerleave", "pointercancel"].forEach(function (evt) { el.addEventListener(evt, stop); });
+  }
+  holdToRepeatAim(els.aimLeft, -AIM_STEP);
+  holdToRepeatAim(els.aimRight, AIM_STEP);
+  updatePhoneAimUI();
 
   var WS_STORAGE_KEY = "swingLabServerUrl";
   var DEFAULT_WS_URL = "wss://swing-lab-relay-production.up.railway.app";
@@ -970,6 +1042,11 @@
       } else if (msg.type === "turn") {
         currentTurnPlayerId = msg.playerId;
         isMyTurn = msg.playerId === myPlayerId;
+        // course.html resets its own aimOffsetDeg to 0 for every new turn (a new lie always
+        // starts aimed straight at the pin) — mirroring that here keeps this phone's display in
+        // lockstep without needing to ask the laptop what the current value is.
+        if (isMyTurn) phoneAimDeg = 0;
+        updatePhoneAimUI();
         if (roundStarted) showScreen("playing");
         updateTurnBanner();
       } else if (msg.type === "room_closed") {
